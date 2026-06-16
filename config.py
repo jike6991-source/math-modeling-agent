@@ -25,6 +25,7 @@ DEEPSEEK_MODEL: str = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
 # ===== 路径配置 =====
 OUTPUTS_DIR: Path = BASE_DIR / "outputs"
 TEMPLATES_DIR: Path = BASE_DIR / "templates"
+PROJECTS_DIR: Path = BASE_DIR / "projects"  # 每道题一个子目录存放产物
 
 # ===== 执行参数 =====
 CODE_EXEC_TIMEOUT: int = 180  # 生成代码的默认执行超时（秒），可在 run_code 调用时覆盖
