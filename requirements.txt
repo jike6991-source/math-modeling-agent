@@ -1,0 +1,10 @@
+# ===== Phase 1（最小pipeline）=====
+openai           # 调用 DeepSeek API（openai 兼容格式）
+python-dotenv    # 加载 .env 配置
+matplotlib       # 图表生成（中文字体 SimHei）
+python-docx      # 论文输出（docx）
+pytest           # 测试
+
+# ===== Phase 2（RAG，暂未启用）=====
+# chromadb              # 向量数据库
+# sentence-transformers # BGE-small-zh-v1.5 embeddings
