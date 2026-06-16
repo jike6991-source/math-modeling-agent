@@ -5,6 +5,13 @@
 outputs/*
 !outputs/.gitkeep
 
+# projects/ 下每道题的图表为生成产物，不提交；分析结果、代码、论文仍跟踪
+projects/**/*.png
+projects/**/*.jpg
+projects/**/*.jpeg
+projects/**/*.svg
+projects/**/*.gif
+
 # Python
 __pycache__/
 *.py[cod]

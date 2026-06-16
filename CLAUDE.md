@@ -33,10 +33,15 @@ math-modeling-agent/
 │   └── retriever.py       # 检索相似论文片段
 ├── templates/             # 论文模板
 │   └── cumcm_template.md  # 国赛论文Markdown模板
-├── outputs/               # 生成的报告和图表（不提交git）
+├── outputs/               # 临时生成的报告和图表（不提交git）
+├── projects/              # 每道题一个子目录，存放该题全部产物
+│   ├── README.md          # 子目录命名约定与结构说明
+│   └── 2023A_定日镜/      # 示例：题目原文、分析结果、代码、图表、论文
 └── tests/
     └── test_pipeline.py   # 端到端测试用例
 ```
+
+> projects/ 下：题目、分析结果(json)、代码、论文(含docx/pdf)纳入git；图表(png/jpg等)忽略，可由代码重新生成。
 
 ## 代码规范
 - 所有函数写中文docstring
@@ -55,7 +60,7 @@ math-modeling-agent/
 ## 关键设计决策
 - DeepSeek API 用 openai SDK 调用，方便后续切换其他模型
 - Agent之间通过字典传递中间结果，不用复杂的消息队列
-- 代码执行用 subprocess 隔离，设超时30秒
+- 代码执行用 subprocess 隔离，默认超时180秒（可在 run_code 调用时覆盖）
 - 图表统一保存为 PNG 到 outputs/ 目录
 
 ## 测试
