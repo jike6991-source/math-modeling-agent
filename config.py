@@ -27,6 +27,14 @@ OUTPUTS_DIR: Path = BASE_DIR / "outputs"
 TEMPLATES_DIR: Path = BASE_DIR / "templates"
 PROJECTS_DIR: Path = BASE_DIR / "projects"  # 每道题一个子目录存放产物
 
+# ===== 知识库 / RAG 配置（Phase 2）=====
+KNOWLEDGE_DIR: Path = BASE_DIR / "knowledge"
+PAPERS_DIR: Path = KNOWLEDGE_DIR / "papers"  # 原始 PDF（不入 git）
+PROCESSED_DIR: Path = KNOWLEDGE_DIR / "processed"  # 切片+标注中间产物 JSON
+CHROMA_DIR: Path = KNOWLEDGE_DIR / "chroma_db"  # ChromaDB 持久化目录（不入 git）
+EMBEDDING_MODEL: str = "BAAI/bge-small-zh-v1.5"  # 中文 embedding 模型
+CHROMA_COLLECTION: str = "cumcm_papers"  # 向量库 collection 名称
+
 # ===== 执行参数 =====
 CODE_EXEC_TIMEOUT: int = 180  # 生成代码的默认执行超时（秒），可在 run_code 调用时覆盖
 LLM_TIMEOUT: int = 120  # LLM 请求超时（秒）

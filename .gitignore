@@ -28,6 +28,12 @@ chroma/
 .chroma/
 *.sqlite3
 
+# 知识库（Phase 2）：原始 PDF 与 Chroma 持久化库不入 git；processed/ 切片产物保留
+knowledge/papers/*
+!knowledge/papers/.gitkeep
+knowledge/chroma_db/*
+!knowledge/chroma_db/.gitkeep
+
 # IDE
 .idea/
 .vscode/
