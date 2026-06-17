@@ -10,40 +10,12 @@ import json
 import logging
 from pathlib import Path
 
-from config import CHROMA_COLLECTION, CHROMA_DIR, EMBEDDING_MODEL, PAPERS_DIR, PROCESSED_DIR
+from config import PAPERS_DIR, PROCESSED_DIR
 from rag.annotator import annotate_chunk
 from rag.chunker import extract_text, split_sections
+from rag.store import embed_texts, get_collection
 
 logger = logging.getLogger(__name__)
-
-_embedder = None  # SentenceTransformer 惰性缓存
-_collection = None  # Chroma collection 惰性缓存
-
-# HNSW 同步阈值调到极大：向量只留在持久化的 SQLite 日志、读取时在内存重建 HNSW，
-# 规避 chromadb 1.1.1 批量写入跨阈值后只落 pickle 不落 .bin、致新进程冷读报错的缺陷。
-_HNSW_CONFIG: dict = {"hnsw:sync_threshold": 10_000_000, "hnsw:batch_size": 10_000_000}
-
-
-def _get_embedder():
-    """惰性加载并缓存 BGE embedding 模型。"""
-    global _embedder
-    if _embedder is None:
-        from sentence_transformers import SentenceTransformer
-
-        logger.info("加载 embedding 模型：%s", EMBEDDING_MODEL)
-        _embedder = SentenceTransformer(EMBEDDING_MODEL)
-    return _embedder
-
-
-def _get_collection():
-    """惰性创建并缓存持久化的 Chroma collection。"""
-    global _collection
-    if _collection is None:
-        import chromadb
-
-        client = chromadb.PersistentClient(path=str(CHROMA_DIR))
-        _collection = client.get_or_create_collection(CHROMA_COLLECTION, metadata=_HNSW_CONFIG)
-    return _collection
 
 
 def index_pdf(pdf_path: str) -> int:
@@ -96,8 +68,7 @@ def _store_records(source: str, records: list[dict]) -> None:
         source: 来源 PDF 文件名（用于生成 chunk id 与 metadata.source）。
         records: 每项含 title/section/text/summary/methods/keywords 的切片记录。
     """
-    embedder = _get_embedder()
-    embeddings = embedder.encode([r["text"] for r in records]).tolist()
+    embeddings = embed_texts([r["text"] for r in records])
 
     ids, documents, metadatas = [], [], []
     for idx, r in enumerate(records):
@@ -114,7 +85,7 @@ def _store_records(source: str, records: list[dict]) -> None:
             }
         )
 
-    collection = _get_collection()
+    collection = get_collection()
     collection.add(ids=ids, documents=documents, embeddings=embeddings, metadatas=metadatas)
 
 
