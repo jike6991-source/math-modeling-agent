@@ -5,6 +5,7 @@
 """
 
 import logging
+import os
 import subprocess
 import sys
 import tempfile
@@ -64,6 +65,10 @@ def run_code(code: str, timeout: int = CODE_EXEC_TIMEOUT, workdir: Path | None =
         "artifacts": [],
     }
 
+    # 强制 matplotlib 使用非交互式 Agg 后端：避免生成代码里的 plt.show() 在子进程中
+    # 弹出阻塞窗口、等不到关闭而触发超时（图表仍可正常 savefig 落盘）。
+    env = {**os.environ, "MPLBACKEND": "Agg"}
+
     try:
         logger.info("开始执行代码（超时 %d 秒，工作目录 %s）", timeout, run_dir)
         completed = subprocess.run(
@@ -73,6 +78,7 @@ def run_code(code: str, timeout: int = CODE_EXEC_TIMEOUT, workdir: Path | None =
             text=True,
             encoding="utf-8",
             timeout=timeout,
+            env=env,
         )
         result["returncode"] = completed.returncode
         result["stdout"] = completed.stdout or ""

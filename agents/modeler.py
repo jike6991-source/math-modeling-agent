@@ -19,7 +19,8 @@ _SYSTEM_PROMPT: str = (
     "2. 求解代码必须自包含、可独立运行，只依赖常见库（numpy、scipy、matplotlib 等）；"
     "若题目缺少具体数据，可用合理的模拟数据并在代码注释中说明。\n"
     "3. 代码中 matplotlib 图表须设置中文字体（plt.rcParams['font.sans-serif']=['SimHei']，"
-    "plt.rcParams['axes.unicode_minus']=False），并将图表保存为 PNG 文件。\n"
+    "plt.rcParams['axes.unicode_minus']=False），用 plt.savefig 将图表保存为 PNG 文件，"
+    "不要调用 plt.show()（在无界面环境会阻塞）。\n"
     "只能返回 JSON，不要附加任何解释性文字。JSON 结构如下：\n"
     "{\n"
     '  "model_description": "Markdown 格式的数学模型",\n'
