@@ -13,10 +13,45 @@ from agents.analyzer import analyze
 from agents.modeler import build_model
 from agents.reporter import build_report
 from config import CODE_EXEC_TIMEOUT, PROJECTS_DIR
+from rag.retriever import format_references, retrieve
 from tools.code_runner import run_code
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
+
+# 检索参考论文片段的数量
+_REFERENCE_TOP_K: int = 6
+
+
+def _retrieve_references(analysis: dict, top_k: int = _REFERENCE_TOP_K) -> str:
+    """根据题目分析结果从知识库检索相关论文片段，渲染为参考文本。
+
+    检索失败（如知识库为空或向量库不可用）不阻断 pipeline，返回空字符串。
+
+    Args:
+        analysis: 题目分析 Agent 的输出。
+        top_k: 检索片段数量。
+
+    Returns:
+        渲染后的参考文本；无结果或失败时为空字符串。
+    """
+    query = "；".join(
+        filter(
+            None,
+            [
+                f"{analysis.get('problem_type', '')}问题",
+                "关键变量：" + "、".join(analysis.get("key_variables", [])),
+                "建模方法：" + "、".join(analysis.get("suggested_methods", [])),
+            ],
+        )
+    )
+    try:
+        results = retrieve(query, top_k=top_k)
+        logger.info("检索到 %d 条参考论文片段", len(results))
+        return format_references(results)
+    except Exception as exc:  # noqa: BLE001 - 检索失败降级为无参考，不阻断 pipeline
+        logger.warning("参考论文检索失败，跳过参考：%s", exc)
+        return ""
 
 
 def _relativize_artifacts(exec_result: dict, base_dir: Path) -> dict:
@@ -70,8 +105,13 @@ def run_pipeline(problem_text: str, project_name: str, exec_timeout: int = CODE_
         json.dumps(analysis, ensure_ascii=False, indent=2), encoding="utf-8"
     )
 
-    # 2. 建模与求解代码
-    model = build_model(problem_text, analysis)
+    # 1.5 检索优秀论文参考片段（供建模与写作借鉴）
+    references = _retrieve_references(analysis)
+    if references:
+        (project_dir / "references.md").write_text(references, encoding="utf-8")
+
+    # 2. 建模与求解代码（参考检索片段）
+    model = build_model(problem_text, analysis, references)
     (project_dir / "solver.py").write_text(model["solver_code"], encoding="utf-8")
     (project_dir / "model.md").write_text(model["model_description"], encoding="utf-8")
 
@@ -86,7 +126,7 @@ def run_pipeline(problem_text: str, project_name: str, exec_timeout: int = CODE_
 
     # 4. 撰写论文（图表用相对路径引用）
     report_exec = _relativize_artifacts(exec_result, project_dir)
-    report = build_report(problem_text, analysis, model, report_exec)
+    report = build_report(problem_text, analysis, model, report_exec, references)
     paper_path = project_dir / "paper.md"
     paper_path.write_text(report, encoding="utf-8")
 

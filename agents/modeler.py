@@ -29,28 +29,36 @@ _SYSTEM_PROMPT: str = (
 )
 
 
-def _build_user_prompt(problem_text: str, analysis: dict) -> str:
+def _build_user_prompt(problem_text: str, analysis: dict, references: str | None = None) -> str:
     """组装发送给 LLM 的用户消息。
 
     Args:
         problem_text: 建模题目原文。
         analysis: 题目分析 Agent 的输出。
+        references: 检索到的优秀论文参考片段，可为 None。
 
     Returns:
-        包含题目与分析结果的提示文本。
+        包含题目、分析结果与参考片段的提示文本。
     """
-    return (
-        f"题目原文：\n{problem_text}\n\n"
-        f"分析结果（JSON）：\n{json.dumps(analysis, ensure_ascii=False, indent=2)}"
-    )
+    parts = [
+        f"题目原文：\n{problem_text}",
+        f"分析结果（JSON）：\n{json.dumps(analysis, ensure_ascii=False, indent=2)}",
+    ]
+    if references and references.strip():
+        parts.append(
+            "以下为往年优秀论文的相关片段，仅供借鉴建模思路与方法，"
+            "不可照抄，须结合本题实际：\n" + references
+        )
+    return "\n\n".join(parts)
 
 
-def _call_llm(problem_text: str, analysis: dict) -> str:
+def _call_llm(problem_text: str, analysis: dict, references: str | None = None) -> str:
     """调用 DeepSeek 获取建模结果原始文本，带重试逻辑。
 
     Args:
         problem_text: 建模题目原文。
         analysis: 题目分析结果。
+        references: 检索到的参考片段，可为 None。
 
     Returns:
         LLM 返回的 JSON 字符串。
@@ -59,7 +67,7 @@ def _call_llm(problem_text: str, analysis: dict) -> str:
         RuntimeError: 多次重试后仍失败时抛出。
     """
     client = get_llm_client()
-    user_prompt = _build_user_prompt(problem_text, analysis)
+    user_prompt = _build_user_prompt(problem_text, analysis, references)
     last_error: Exception | None = None
 
     for attempt in range(1, LLM_MAX_RETRIES + 1):
@@ -118,7 +126,7 @@ def _parse_and_validate(raw: str) -> dict:
     }
 
 
-def build_model(problem_text: str, analysis: dict) -> dict:
+def build_model(problem_text: str, analysis: dict, references: str | None = None) -> dict:
     """生成数学模型与求解代码。
 
     根据题目原文与分析结果，调用 DeepSeek 建立数学模型并编写求解代码。
@@ -126,6 +134,7 @@ def build_model(problem_text: str, analysis: dict) -> dict:
     Args:
         problem_text: 建模题目原文。
         analysis: 题目分析 Agent 的输出（problem_type、key_variables、suggested_methods）。
+        references: 检索到的优秀论文参考片段，可选；提供时供 LLM 借鉴建模思路。
 
     Returns:
         建模结果字典，包含：
@@ -143,7 +152,7 @@ def build_model(problem_text: str, analysis: dict) -> dict:
         raise ValueError("分析结果不能为空")
 
     logger.info("开始建模：题目类型=%s", analysis.get("problem_type", "未知"))
-    raw = _call_llm(problem_text, analysis)
+    raw = _call_llm(problem_text, analysis, references)
     result = _parse_and_validate(raw)
     logger.info("建模完成：模型描述 %d 字符，代码 %d 字符", len(result["model_description"]), len(result["solver_code"]))
     return result

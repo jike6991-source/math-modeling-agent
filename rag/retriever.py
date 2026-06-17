@@ -75,3 +75,30 @@ def retrieve(query: str, top_k: int = 5, section_type: str | None = None) -> lis
 
     logger.info("检索完成，返回 %d 条结果", len(results))
     return results
+
+
+def format_references(results: list[dict], snippet_chars: int = 500) -> str:
+    """把检索结果渲染为供建模/写作参考的紧凑文本块。
+
+    Args:
+        results: retrieve 返回的结果列表。
+        snippet_chars: 每条切片正文截断长度。
+
+    Returns:
+        Markdown 文本；results 为空时返回空字符串。
+    """
+    if not results:
+        return ""
+
+    blocks: list[str] = []
+    for i, r in enumerate(results, 1):
+        lines = [f"[参考 {i}] 来源：{r['source']}｜章节：{r['section']}｜相似度：{r['score']}"]
+        if r.get("methods"):
+            lines.append(f"建模方法：{r['methods']}")
+        if r.get("summary"):
+            lines.append(f"要点：{r['summary']}")
+        snippet = (r.get("text") or "").strip().replace("\n", " ")[:snippet_chars]
+        if snippet:
+            lines.append(f"片段：{snippet}")
+        blocks.append("\n".join(lines))
+    return "\n\n".join(blocks)

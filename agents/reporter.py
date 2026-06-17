@@ -62,7 +62,11 @@ def _build_system_prompt(template: str) -> str:
 
 
 def _build_user_prompt(
-    problem_text: str, analysis: dict, model_result: dict, exec_result: dict | None
+    problem_text: str,
+    analysis: dict,
+    model_result: dict,
+    exec_result: dict | None,
+    references: str | None = None,
 ) -> str:
     """组装发送给 LLM 的用户消息。
 
@@ -71,6 +75,7 @@ def _build_user_prompt(
         analysis: 题目分析结果。
         model_result: 建模结果。
         exec_result: 代码执行结果，可为 None。
+        references: 检索到的优秀论文参考片段，可为 None。
 
     Returns:
         提示文本。
@@ -87,6 +92,11 @@ def _build_user_prompt(
         parts.append(f"代码运行输出：\n{stdout if stdout else '（无标准输出）'}")
         if artifacts:
             parts.append("生成的图表文件：\n" + "\n".join(f"- {a}" for a in artifacts))
+    if references and references.strip():
+        parts.append(
+            "以下为往年优秀论文的相关片段，可借鉴其行文结构与表述方式，"
+            "不可照抄，须忠实于本题的模型与结果：\n" + references
+        )
     return "\n\n".join(parts)
 
 
@@ -131,6 +141,7 @@ def build_report(
     analysis: dict,
     model_result: dict,
     exec_result: dict | None = None,
+    references: str | None = None,
 ) -> str:
     """组装结构化论文报告。
 
@@ -142,6 +153,7 @@ def build_report(
         model_result: 建模 Agent 的输出（model_description、solver_code 等）。
         exec_result: 代码执行结果（stdout、artifacts 等），可选；
             提供时论文会结合数值结论与图表。
+        references: 检索到的优秀论文参考片段，可选；提供时供 LLM 借鉴行文结构。
 
     Returns:
         Markdown 格式的论文正文。
@@ -158,7 +170,7 @@ def build_report(
     logger.info("开始撰写论文报告")
     template = _load_template()
     system_prompt = _build_system_prompt(template)
-    user_prompt = _build_user_prompt(problem_text, analysis, model_result, exec_result)
+    user_prompt = _build_user_prompt(problem_text, analysis, model_result, exec_result, references)
     report = _call_llm(system_prompt, user_prompt)
     logger.info("论文报告撰写完成：%d 字符", len(report))
     return report
