@@ -8,7 +8,7 @@ import json
 import logging
 import time
 
-from config import DEEPSEEK_CHAT_MODEL, LLM_MAX_RETRIES, TEMPLATES_DIR, get_llm_client
+from config import DEEPSEEK_REASONER_MODEL, LLM_MAX_RETRIES, TEMPLATES_DIR, get_llm_client
 
 logger = logging.getLogger(__name__)
 
@@ -117,13 +117,13 @@ def _call_llm(system_prompt: str, user_prompt: str) -> str:
     Raises:
         RuntimeError: 多次重试后仍失败时抛出。
     """
-    client = get_llm_client(DEEPSEEK_CHAT_MODEL)
+    client = get_llm_client(DEEPSEEK_REASONER_MODEL)
     last_error: Exception | None = None
 
     for attempt in range(1, LLM_MAX_RETRIES + 1):
         try:
             response = client.chat.completions.create(
-                model=DEEPSEEK_CHAT_MODEL,
+                model=DEEPSEEK_REASONER_MODEL,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},

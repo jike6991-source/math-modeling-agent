@@ -1,6 +1,6 @@
 """项目入口，负责编排建模 pipeline。
 
-流程：题目分析 → 建模与求解代码 → 执行代码出图 → 撰写论文。
+流程：检索参考论文 → 题目分析 → 建模与求解代码 → 执行代码出图 → 撰写论文 → 导出 Word。
 全部产物按题目存入 projects/<题目名>/ 目录。
 """
 
@@ -23,30 +23,21 @@ logger = logging.getLogger(__name__)
 _REFERENCE_TOP_K: int = 6
 
 
-def _retrieve_references(analysis: dict, top_k: int = _REFERENCE_TOP_K) -> tuple[str, list[str]]:
-    """根据题目分析结果从知识库检索相关论文片段。
+def _retrieve_references(problem_text: str, top_k: int = _REFERENCE_TOP_K) -> tuple[str, list[str]]:
+    """根据题目原文从知识库检索相关论文片段。
 
+    检索在 analyze 之前执行，method_floor 可随即传入 analyze 作为方法推荐下限。
     检索失败（如知识库为空或向量库不可用）不阻断 pipeline，返回空结果。
 
     Args:
-        analysis: 题目分析 Agent 的输出。
+        problem_text: 建模题目原文（取前 500 字作为检索 query，BGE 自行处理长度）。
         top_k: 检索片段数量。
 
     Returns:
         二元组 (参考文本, 方法下限列表)；无结果或失败时为 ("", [])。
     """
-    query = "；".join(
-        filter(
-            None,
-            [
-                f"{analysis.get('problem_type', '')}问题",
-                "关键变量：" + "、".join(analysis.get("key_variables", [])),
-                "建模方法：" + "、".join(analysis.get("suggested_methods", [])),
-            ],
-        )
-    )
     try:
-        results = retrieve(query, top_k=top_k)
+        results = retrieve(problem_text[:500], top_k=top_k)
         logger.info("检索到 %d 条参考论文片段", len(results))
         return format_references(results), collect_methods(results)
     except Exception as exc:  # noqa: BLE001 - 检索失败降级为无参考，不阻断 pipeline
@@ -105,18 +96,18 @@ def run_pipeline(
     # 0. 保存题目原文
     (project_dir / "problem.md").write_text(problem_text, encoding="utf-8")
 
-    # 1. 题目分析
-    analysis = analyze(problem_text)
+    # 1. 检索优秀论文参考片段（先于分析，以便将 method_floor 传入 analyzer）
+    references, method_floor = _retrieve_references(problem_text)
+    if references:
+        (project_dir / "references.md").write_text(references, encoding="utf-8")
+
+    # 2. 题目分析（传入 method_floor 作为方法推荐下限）
+    analysis = analyze(problem_text, method_floor=method_floor)
     (project_dir / "analysis.json").write_text(
         json.dumps(analysis, ensure_ascii=False, indent=2), encoding="utf-8"
     )
 
-    # 1.5 检索优秀论文参考片段（供建模与写作借鉴），并提取方法下限
-    references, method_floor = _retrieve_references(analysis)
-    if references:
-        (project_dir / "references.md").write_text(references, encoding="utf-8")
-
-    # 2. 建模与求解代码（参考检索片段、真实数据、方法下限）
+    # 3. 建模与求解代码（参考检索片段、真实数据、方法下限）
     abs_data_files = [str(Path(p).resolve()) for p in (data_files or [])]
     model = build_model(
         problem_text, analysis, references, data_files=abs_data_files, method_floor=method_floor
@@ -124,7 +115,7 @@ def run_pipeline(
     (project_dir / "solver.py").write_text(model["solver_code"], encoding="utf-8")
     (project_dir / "model.md").write_text(model["model_description"], encoding="utf-8")
 
-    # 3. 执行求解代码（图表落在 charts/ 下）
+    # 4. 执行求解代码（图表落在 charts/ 下）
     exec_result = run_code(model["solver_code"], timeout=exec_timeout, workdir=charts_dir)
     if exec_result["success"]:
         logger.info("求解代码执行成功，产物 %d 个", len(exec_result["artifacts"]))
@@ -133,11 +124,23 @@ def run_pipeline(
     else:
         logger.warning("求解代码执行失败：%s", (exec_result["stderr"] or "").strip()[:300])
 
-    # 4. 撰写论文（图表用相对路径引用）
+    # 5. 撰写论文（图表用相对路径引用）
     report_exec = _relativize_artifacts(exec_result, project_dir)
     report = build_report(problem_text, analysis, model, report_exec, references)
     paper_path = project_dir / "paper.md"
     paper_path.write_text(report, encoding="utf-8")
+    logger.info("Markdown 论文已保存：%s", paper_path)
+
+    # 6. 导出 Word 论文
+    docx_path: Path | None = None
+    try:
+        from tools.docx_exporter import export_docx
+        docx_path = project_dir / "paper.docx"
+        export_docx(report, docx_path, base_dir=project_dir)
+        logger.info("Word 论文已保存：%s", docx_path)
+    except Exception as exc:
+        logger.warning("docx 导出失败（不影响 md 论文）：%s", exc)
+        docx_path = None
 
     logger.info("pipeline 完成，论文已保存：%s", paper_path)
     return {
@@ -146,6 +149,7 @@ def run_pipeline(
         "exec_success": exec_result["success"],
         "artifacts": exec_result["artifacts"],
         "paper_path": str(paper_path),
+        "paper_docx_path": str(docx_path) if docx_path else None,
     }
 
 
@@ -175,7 +179,9 @@ def main() -> None:
     print(f"题目类型：{summary['analysis']['problem_type']}")
     print(f"代码执行成功：{summary['exec_success']}")
     print(f"图表产物：{summary['artifacts']}")
-    print(f"论文：{summary['paper_path']}")
+    print(f"论文（md）：{summary['paper_path']}")
+    if summary.get("paper_docx_path"):
+        print(f"论文（docx）：{summary['paper_docx_path']}")
 
 
 if __name__ == "__main__":

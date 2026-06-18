@@ -114,9 +114,16 @@ def _build_user_prompt(
         f"分析结果（JSON）：\n{json.dumps(analysis, ensure_ascii=False, indent=2)}",
     ]
     if recommended_methods:
-        parts.append(
-            "必须采用的数学方法（recommended_methods）：" + "、".join(recommended_methods)
-        )
+        # 兼容 list[{"method","reason"}]（新格式）与 list[str]（旧格式）
+        method_parts: list[str] = []
+        for m in recommended_methods:
+            if isinstance(m, dict):
+                name = m.get("method", "")
+                reason = m.get("reason", "")
+                method_parts.append(f"{name}（{reason}）" if reason else name)
+            else:
+                method_parts.append(str(m))
+        parts.append("必须采用的数学方法（recommended_methods）：" + "、".join(method_parts))
     if recommended_libraries:
         parts.append(
             "应优先使用的 Python 库（recommended_libraries）：" + "、".join(recommended_libraries)

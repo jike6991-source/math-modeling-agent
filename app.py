@@ -91,7 +91,7 @@ def render_results_section(result: dict) -> None:
         st.warning("求解代码执行失败或超时，图表可能不完整，论文仍已生成。")
 
     # 下载按钮
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
     with col1:
         paper_bytes = paper_path.read_bytes() if paper_path.exists() else b""
         st.download_button(
@@ -101,6 +101,17 @@ def render_results_section(result: dict) -> None:
             mime="text/markdown",
         )
     with col2:
+        docx_path: Path | None = result.get("paper_docx_path")
+        if docx_path and docx_path.exists():
+            st.download_button(
+                "下载论文 paper.docx",
+                data=docx_path.read_bytes(),
+                file_name="paper.docx",
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            )
+        else:
+            st.caption("Word 论文未生成")
+    with col3:
         code_bytes = solver_path.read_bytes() if solver_path.exists() else b""
         st.download_button(
             "下载代码 solver.py",

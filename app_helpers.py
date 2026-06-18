@@ -82,29 +82,13 @@ def run_pipeline_staged(
     if uploaded_data_files:
         saved_data_paths = [str(p.resolve()) for p in save_data_files(uploaded_data_files, project_dir)]
 
-    # 阶段 1：题目分析
-    status.update(label="阶段 1/5：分析题目…")
-    try:
-        analysis: dict = analyze(problem_text)
-        (project_dir / "analysis.json").write_text(
-            json.dumps(analysis, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
-        st.write(f"✓ 题目分析完成：{analysis['problem_type']}，"
-                 f"识别变量 {len(analysis['key_variables'])} 个")
-    except Exception as exc:
-        logger.exception("题目分析失败")
-        status.update(label="题目分析失败", state="error")
-        st.error(f"题目分析失败：{exc}")
-        return {}
-
-    # 阶段 2：检索参考论文（失败静默降级），并提取方法下限
-    status.update(label="阶段 2/5：检索参考论文…")
+    # 阶段 1：检索参考论文（先于分析，method_floor 作为方法推荐下限传入 analyzer）
+    status.update(label="阶段 1/6：检索参考论文…")
     references = ""
     method_floor: list[str] = []
     try:
         from rag.retriever import collect_methods, format_references, retrieve
-        query = f"{analysis['problem_type']} {' '.join(analysis['key_variables'][:3])}"
-        results = retrieve(query, top_k=6)
+        results = retrieve(problem_text[:500], top_k=6)
         references = format_references(results)
         method_floor = collect_methods(results)
         if references:
@@ -114,8 +98,24 @@ def run_pipeline_staged(
         logger.warning("RAG 检索失败（降级为空）：%s", exc)
         st.write("⚠ 知识库不可用，跳过参考检索")
 
+    # 阶段 2：题目分析（传入 method_floor）
+    status.update(label="阶段 2/6：分析题目…")
+    try:
+        analysis: dict = analyze(problem_text, method_floor=method_floor or None)
+        (project_dir / "analysis.json").write_text(
+            json.dumps(analysis, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        st.write(f"✓ 题目分析完成：{analysis['problem_type']}，"
+                 f"识别变量 {len(analysis['key_variables'])} 个，"
+                 f"推荐方法 {len(analysis['recommended_methods'])} 个")
+    except Exception as exc:
+        logger.exception("题目分析失败")
+        status.update(label="题目分析失败", state="error")
+        st.error(f"题目分析失败：{exc}")
+        return {}
+
     # 阶段 3：建立数学模型
-    status.update(label="阶段 3/5：建立数学模型…")
+    status.update(label="阶段 3/6：建立数学模型…")
     try:
         model_result: dict = build_model(
             problem_text,
@@ -138,7 +138,7 @@ def run_pipeline_staged(
         return {}
 
     # 阶段 4：执行求解代码
-    status.update(label="阶段 4/5：执行求解代码…")
+    status.update(label="阶段 4/6：执行求解代码…")
     charts_dir = project_dir / "charts"
     charts_dir.mkdir(exist_ok=True)
     try:
@@ -160,7 +160,7 @@ def run_pipeline_staged(
         st.write(f"⚠ 代码执行异常：{exc}")
 
     # 阶段 5：撰写论文
-    status.update(label="阶段 5/5：撰写论文…")
+    status.update(label="阶段 5/6：撰写论文…")
     try:
         report_exec = _relativize_artifacts(exec_result, project_dir)
         paper = build_report(problem_text, analysis, model_result, report_exec,
@@ -174,10 +174,24 @@ def run_pipeline_staged(
         st.error(f"论文生成失败：{exc}")
         return {}
 
+    # 阶段 6：导出 Word 论文
+    status.update(label="阶段 6/6：导出 Word 论文…")
+    docx_path: Path | None = None
+    try:
+        from tools.docx_exporter import export_docx
+        docx_path = project_dir / "paper.docx"
+        export_docx(paper, docx_path, base_dir=project_dir)
+        st.write("✓ Word 论文导出完成")
+    except Exception as exc:
+        logger.warning("docx 导出失败：%s", exc)
+        st.write(f"⚠ Word 导出失败：{exc}")
+        docx_path = None
+
     status.update(label="建模完成", state="complete")
     return {
         "project_dir": project_dir,
         "paper_path": project_dir / "paper.md",
+        "paper_docx_path": docx_path,
         "solver_path": project_dir / "solver.py",
         "artifacts": exec_result.get("artifacts", []),
         "exec_success": exec_result.get("success", False),

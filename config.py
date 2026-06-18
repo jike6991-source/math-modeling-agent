@@ -20,8 +20,8 @@ load_dotenv(BASE_DIR / ".env")
 # ===== DeepSeek / LLM 配置 =====
 DEEPSEEK_API_KEY: str = os.getenv("DEEPSEEK_API_KEY", "")
 DEEPSEEK_BASE_URL: str = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
-# 对话/通用任务模型（题目分析、论文撰写、切片标注等，成本低）
-DEEPSEEK_CHAT_MODEL: str = os.getenv("DEEPSEEK_CHAT_MODEL", "deepseek-chat")
+# 对话/通用任务模型（已统一为 reasoner，可通过 .env 覆盖）
+DEEPSEEK_CHAT_MODEL: str = os.getenv("DEEPSEEK_CHAT_MODEL", "deepseek-reasoner")
 # 强推理模型（数学建模与求解代码生成，推理能力强但更慢更贵）
 DEEPSEEK_REASONER_MODEL: str = os.getenv("DEEPSEEK_REASONER_MODEL", "deepseek-reasoner")
 # 向后兼容别名：旧代码仍可引用 DEEPSEEK_MODEL（等同 chat 模型）

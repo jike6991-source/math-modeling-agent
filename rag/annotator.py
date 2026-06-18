@@ -1,14 +1,14 @@
 """切片结构化标注（Phase 2）。
 
-调用 DeepSeek 为单个论文切片打结构化标签（章节/摘要/方法/关键词）。
-复用 agents/analyzer.py 的 LLM 调用范式（get_llm_client + json_object + 指数退避重试）。
+调用 DeepSeek（reasoner）为单个论文切片打结构化标签（章节/摘要/方法/关键词）。
+reasoner 不支持 response_format=json_object，改为文本输出+健壮 JSON 提取。
 """
 
 import json
 import logging
 import time
 
-from config import DEEPSEEK_CHAT_MODEL, LLM_MAX_RETRIES, get_llm_client
+from config import DEEPSEEK_REASONER_MODEL, LLM_MAX_RETRIES, get_llm_client
 from rag.chunker import SECTIONS
 
 logger = logging.getLogger(__name__)
@@ -27,8 +27,24 @@ _SYSTEM_PROMPT: str = (
 )
 
 
+def _extract_json(raw: str) -> dict:
+    """从 LLM 原始输出中提取 JSON，兼容 ```json 围栏与前后多余文字。"""
+    text = raw.strip()
+    if text.startswith("```"):
+        lines = text.splitlines()
+        end_idx = next(
+            (i for i in range(1, len(lines)) if lines[i].strip() == "```"),
+            len(lines),
+        )
+        text = "\n".join(lines[1:end_idx])
+    start, end = text.find("{"), text.rfind("}")
+    if start == -1 or end < start:
+        raise ValueError(f"no JSON object found: {raw[:100]!r}")
+    return json.loads(text[start : end + 1])
+
+
 def annotate_chunk(text: str, guessed_section: str) -> dict:
-    """调用 DeepSeek 对切片做结构化标注，失败时退回基于正则的猜测。
+    """调用 DeepSeek（reasoner）对切片做结构化标注，失败时退回基于正则的猜测。
 
     Args:
         text: 切片正文。
@@ -37,22 +53,22 @@ def annotate_chunk(text: str, guessed_section: str) -> dict:
     Returns:
         含 section / summary / methods / keywords 的字典。
     """
-    client = get_llm_client(DEEPSEEK_CHAT_MODEL)
+    client = get_llm_client(DEEPSEEK_REASONER_MODEL)
     fallback_section = guessed_section if guessed_section in SECTIONS else SECTIONS[0]
     fallback = {"section": fallback_section, "summary": "", "methods": [], "keywords": []}
 
     for attempt in range(1, LLM_MAX_RETRIES + 1):
         try:
             response = client.chat.completions.create(
-                model=DEEPSEEK_CHAT_MODEL,
+                model=DEEPSEEK_REASONER_MODEL,
                 messages=[
                     {"role": "system", "content": _SYSTEM_PROMPT},
                     {"role": "user", "content": text[:4000]},
                 ],
-                response_format={"type": "json_object"},
+                # reasoner 不支持 response_format=json_object，改为健壮文本解析
                 temperature=0.2,
             )
-            data = json.loads(response.choices[0].message.content or "{}")
+            data = _extract_json(response.choices[0].message.content or "{}")
             section = data.get("section")
             return {
                 "section": section if section in SECTIONS else fallback_section,
