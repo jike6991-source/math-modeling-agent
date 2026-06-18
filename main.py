@@ -13,7 +13,7 @@ from agents.analyzer import analyze
 from agents.modeler import build_model
 from agents.reporter import build_report
 from config import CODE_EXEC_TIMEOUT, PROJECTS_DIR
-from rag.retriever import format_references, retrieve
+from rag.retriever import collect_methods, format_references, retrieve
 from tools.code_runner import run_code
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
@@ -23,17 +23,17 @@ logger = logging.getLogger(__name__)
 _REFERENCE_TOP_K: int = 6
 
 
-def _retrieve_references(analysis: dict, top_k: int = _REFERENCE_TOP_K) -> str:
-    """根据题目分析结果从知识库检索相关论文片段，渲染为参考文本。
+def _retrieve_references(analysis: dict, top_k: int = _REFERENCE_TOP_K) -> tuple[str, list[str]]:
+    """根据题目分析结果从知识库检索相关论文片段。
 
-    检索失败（如知识库为空或向量库不可用）不阻断 pipeline，返回空字符串。
+    检索失败（如知识库为空或向量库不可用）不阻断 pipeline，返回空结果。
 
     Args:
         analysis: 题目分析 Agent 的输出。
         top_k: 检索片段数量。
 
     Returns:
-        渲染后的参考文本；无结果或失败时为空字符串。
+        二元组 (参考文本, 方法下限列表)；无结果或失败时为 ("", [])。
     """
     query = "；".join(
         filter(
@@ -48,10 +48,10 @@ def _retrieve_references(analysis: dict, top_k: int = _REFERENCE_TOP_K) -> str:
     try:
         results = retrieve(query, top_k=top_k)
         logger.info("检索到 %d 条参考论文片段", len(results))
-        return format_references(results)
+        return format_references(results), collect_methods(results)
     except Exception as exc:  # noqa: BLE001 - 检索失败降级为无参考，不阻断 pipeline
         logger.warning("参考论文检索失败，跳过参考：%s", exc)
-        return ""
+        return "", []
 
 
 def _relativize_artifacts(exec_result: dict, base_dir: Path) -> dict:
@@ -75,13 +75,19 @@ def _relativize_artifacts(exec_result: dict, base_dir: Path) -> dict:
     return rel
 
 
-def run_pipeline(problem_text: str, project_name: str, exec_timeout: int = CODE_EXEC_TIMEOUT) -> dict:
+def run_pipeline(
+    problem_text: str,
+    project_name: str,
+    exec_timeout: int = CODE_EXEC_TIMEOUT,
+    data_files: list[str] | None = None,
+) -> dict:
     """运行完整建模 pipeline 并将产物存入 projects/<project_name>/。
 
     Args:
         problem_text: 建模题目原文。
         project_name: 题目项目名（作为 projects/ 下的子目录名）。
         exec_timeout: 求解代码执行超时（秒）。
+        data_files: 题目附带数据文件的绝对路径列表，可选；提供时建模代码读取真实数据。
 
     Returns:
         结果摘要字典，包含各产物文件路径与执行结果。
@@ -105,13 +111,16 @@ def run_pipeline(problem_text: str, project_name: str, exec_timeout: int = CODE_
         json.dumps(analysis, ensure_ascii=False, indent=2), encoding="utf-8"
     )
 
-    # 1.5 检索优秀论文参考片段（供建模与写作借鉴）
-    references = _retrieve_references(analysis)
+    # 1.5 检索优秀论文参考片段（供建模与写作借鉴），并提取方法下限
+    references, method_floor = _retrieve_references(analysis)
     if references:
         (project_dir / "references.md").write_text(references, encoding="utf-8")
 
-    # 2. 建模与求解代码（参考检索片段）
-    model = build_model(problem_text, analysis, references)
+    # 2. 建模与求解代码（参考检索片段、真实数据、方法下限）
+    abs_data_files = [str(Path(p).resolve()) for p in (data_files or [])]
+    model = build_model(
+        problem_text, analysis, references, data_files=abs_data_files, method_floor=method_floor
+    )
     (project_dir / "solver.py").write_text(model["solver_code"], encoding="utf-8")
     (project_dir / "model.md").write_text(model["model_description"], encoding="utf-8")
 
@@ -148,10 +157,19 @@ def main() -> None:
     parser.add_argument(
         "--timeout", type=int, default=CODE_EXEC_TIMEOUT, help="求解代码执行超时（秒）"
     )
+    parser.add_argument(
+        "--data",
+        action="append",
+        default=None,
+        metavar="DATA_FILE",
+        help="题目附带数据文件路径（CSV/Excel），可多次指定",
+    )
     args = parser.parse_args()
 
     problem_text = Path(args.problem_file).read_text(encoding="utf-8")
-    summary = run_pipeline(problem_text, args.name, exec_timeout=args.timeout)
+    summary = run_pipeline(
+        problem_text, args.name, exec_timeout=args.timeout, data_files=args.data
+    )
 
     print("\n=== pipeline 完成 ===")
     print(f"题目类型：{summary['analysis']['problem_type']}")

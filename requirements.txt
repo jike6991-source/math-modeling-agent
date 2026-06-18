@@ -5,6 +5,15 @@ matplotlib       # 图表生成（中文字体 SimHei）
 python-docx      # 论文输出（docx）
 pytest           # 测试
 
+# ===== 建模求解 =====
+pulp             # 整数/线性规划求解
+statsmodels      # 时间序列（ARIMA 等）
+
+# ===== Streamlit 前端 =====
+streamlit        # Web UI 框架
+pandas           # CSV/Excel 预览
+openpyxl         # pandas 读取 .xlsx 所需引擎
+
 # ===== Phase 2（RAG）=====
 chromadb              # 向量数据库（持久化到 knowledge/chroma_db）
 sentence-transformers # BGE-small-zh-v1.5 embeddings

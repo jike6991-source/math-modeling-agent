@@ -8,7 +8,7 @@ import json
 import logging
 import time
 
-from config import DEEPSEEK_MODEL, LLM_MAX_RETRIES, get_llm_client
+from config import DEEPSEEK_CHAT_MODEL, LLM_MAX_RETRIES, get_llm_client
 from rag.chunker import SECTIONS
 
 logger = logging.getLogger(__name__)
@@ -37,14 +37,14 @@ def annotate_chunk(text: str, guessed_section: str) -> dict:
     Returns:
         含 section / summary / methods / keywords 的字典。
     """
-    client = get_llm_client()
+    client = get_llm_client(DEEPSEEK_CHAT_MODEL)
     fallback_section = guessed_section if guessed_section in SECTIONS else SECTIONS[0]
     fallback = {"section": fallback_section, "summary": "", "methods": [], "keywords": []}
 
     for attempt in range(1, LLM_MAX_RETRIES + 1):
         try:
             response = client.chat.completions.create(
-                model=DEEPSEEK_MODEL,
+                model=DEEPSEEK_CHAT_MODEL,
                 messages=[
                     {"role": "system", "content": _SYSTEM_PROMPT},
                     {"role": "user", "content": text[:4000]},

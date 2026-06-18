@@ -1,0 +1,27 @@
+{
+  "problem_type": "优化",
+  "key_variables": [
+    "临时工人数",
+    "排班方案",
+    "小组需求",
+    "工作时间段",
+    "休息天数"
+  ],
+  "suggested_methods": [
+    "整数线性规划",
+    "0-1规划",
+    "动态规划",
+    "列生成"
+  ],
+  "recommended_methods": [
+    "整数线性规划",
+    "0-1规划",
+    "动态规划",
+    "列生成"
+  ],
+  "recommended_libraries": [
+    "pulp",
+    "scipy.optimize",
+    "networkx"
+  ]
+}

@@ -34,6 +34,9 @@ knowledge/papers/*
 knowledge/chroma_db/*
 !knowledge/chroma_db/.gitkeep
 
+# 用户上传的数据附件（各项目子目录内的 data/ 文件夹）
+projects/**/data/
+
 # IDE
 .idea/
 .vscode/

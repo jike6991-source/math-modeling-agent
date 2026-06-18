@@ -8,7 +8,7 @@ import json
 import logging
 import time
 
-from config import DEEPSEEK_MODEL, LLM_MAX_RETRIES, TEMPLATES_DIR, get_llm_client
+from config import DEEPSEEK_CHAT_MODEL, LLM_MAX_RETRIES, TEMPLATES_DIR, get_llm_client
 
 logger = logging.getLogger(__name__)
 
@@ -52,11 +52,15 @@ def _build_system_prompt(template: str) -> str:
         "1. 严格遵循下面的模板结构（章节标题、顺序保持一致），将占位符替换为实际内容。\n"
         "2. 摘要需概述问题、方法、主要结论；关键词 3-5 个。\n"
         "3. 模型假设、符号说明、模型建立与求解须与提供的数学模型一致。\n"
-        "4. 模型检验与灵敏度分析须结合代码运行结果（数值结论、图表）。\n"
-        "5. 若提供了图表文件，用 Markdown 图片语法在正文相应位置引用，如 "
-        "`![灵敏度分析](charts/sensitivity.png)`。\n"
-        "6. 附录中附上完整求解代码。\n"
-        "7. 只输出 Markdown 论文正文，不要附加任何额外说明或代码块包裹整篇文档。\n\n"
+        "4. 正文须引用至少 5 张图表，每张图都要有图号（如「图1」）、标题和针对性的分析说明，"
+        "用 Markdown 图片语法在相应位置引用提供的图表文件，如 "
+        "`![图1 灵敏度分析](charts/sensitivity.png)`；不得引用未提供的图表文件。\n"
+        "5. 灵敏度分析必须基于真实求解结果做参数扰动分析，禁止编造数据；"
+        "若代码运行结果未提供相应数据，则如实说明而非杜撰。\n"
+        "6. 模型检验须用实际数据回代验证（给出回代的数值对比结果），不能只做文字描述。\n"
+        "7. 写作的章节深度与论证严谨程度不得低于所提供的参考论文片段。\n"
+        "8. 附录中附上完整求解代码。\n"
+        "9. 只输出 Markdown 论文正文，不要附加任何额外说明或代码块包裹整篇文档。\n\n"
         f"=== 论文模板 ===\n{template}"
     )
 
@@ -113,13 +117,13 @@ def _call_llm(system_prompt: str, user_prompt: str) -> str:
     Raises:
         RuntimeError: 多次重试后仍失败时抛出。
     """
-    client = get_llm_client()
+    client = get_llm_client(DEEPSEEK_CHAT_MODEL)
     last_error: Exception | None = None
 
     for attempt in range(1, LLM_MAX_RETRIES + 1):
         try:
             response = client.chat.completions.create(
-                model=DEEPSEEK_MODEL,
+                model=DEEPSEEK_CHAT_MODEL,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},

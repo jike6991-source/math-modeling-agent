@@ -77,6 +77,29 @@ def retrieve(query: str, top_k: int = 5, section_type: str | None = None) -> lis
     return results
 
 
+def collect_methods(results: list[dict]) -> list[str]:
+    """从检索结果聚合参考论文使用的建模方法，作为建模"方法下限"。
+
+    各切片的 methods 字段为逗号分隔字符串，这里切分、去空白、去重并保持出现顺序。
+
+    Args:
+        results: retrieve 返回的结果列表。
+
+    Returns:
+        去重后的方法名列表；无方法时返回空列表。
+    """
+    methods: list[str] = []
+    seen: set[str] = set()
+    for r in results:
+        raw = r.get("methods") or ""
+        for part in raw.replace("、", ",").replace("；", ",").split(","):
+            name = part.strip()
+            if name and name not in seen:
+                seen.add(name)
+                methods.append(name)
+    return methods
+
+
 def format_references(results: list[dict], snippet_chars: int = 500) -> str:
     """把检索结果渲染为供建模/写作参考的紧凑文本块。
 

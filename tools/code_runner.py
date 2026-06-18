@@ -46,8 +46,9 @@ def run_code(code: str, timeout: int = CODE_EXEC_TIMEOUT, workdir: Path | None =
     run_dir = workdir or OUTPUTS_DIR
     run_dir.mkdir(parents=True, exist_ok=True)
 
-    # 记录执行前已存在的文件，用于事后识别新增产物
-    before = {p for p in run_dir.iterdir() if p.is_file()}
+    # 记录执行前已存在的文件（递归），用于事后识别新增产物；
+    # 递归是因为生成代码可能把图表存到自建的子目录里。
+    before = {p for p in run_dir.rglob("*") if p.is_file()}
 
     # 代码写入工作目录内的临时文件，确保相对路径产物落在 run_dir
     with tempfile.NamedTemporaryFile(
@@ -67,7 +68,14 @@ def run_code(code: str, timeout: int = CODE_EXEC_TIMEOUT, workdir: Path | None =
 
     # 强制 matplotlib 使用非交互式 Agg 后端：避免生成代码里的 plt.show() 在子进程中
     # 弹出阻塞窗口、等不到关闭而触发超时（图表仍可正常 savefig 落盘）。
-    env = {**os.environ, "MPLBACKEND": "Agg"}
+    # 同时强制子进程以 UTF-8 输出：Windows 默认用 GBK(cp936)，含中文的报错/打印会产生
+    # 非 UTF-8 字节，导致父进程按 utf-8 解码子进程输出时崩溃、真实错误丢失。
+    env = {
+        **os.environ,
+        "MPLBACKEND": "Agg",
+        "PYTHONIOENCODING": "utf-8",
+        "PYTHONUTF8": "1",
+    }
 
     try:
         logger.info("开始执行代码（超时 %d 秒，工作目录 %s）", timeout, run_dir)
@@ -77,6 +85,7 @@ def run_code(code: str, timeout: int = CODE_EXEC_TIMEOUT, workdir: Path | None =
             capture_output=True,
             text=True,
             encoding="utf-8",
+            errors="replace",  # 仍出现非法字节时以替换字符兜底，避免解码崩溃
             timeout=timeout,
             env=env,
         )
@@ -100,8 +109,8 @@ def run_code(code: str, timeout: int = CODE_EXEC_TIMEOUT, workdir: Path | None =
         # 清理临时脚本本身，避免被误判为产物
         script_path.unlink(missing_ok=True)
 
-    # 识别新增的产物文件
-    after = {p for p in run_dir.iterdir() if p.is_file()}
+    # 识别新增的产物文件（递归）
+    after = {p for p in run_dir.rglob("*") if p.is_file()}
     result["artifacts"] = sorted(str(p) for p in (after - before))
 
     return result

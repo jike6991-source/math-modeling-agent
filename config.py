@@ -20,7 +20,12 @@ load_dotenv(BASE_DIR / ".env")
 # ===== DeepSeek / LLM 配置 =====
 DEEPSEEK_API_KEY: str = os.getenv("DEEPSEEK_API_KEY", "")
 DEEPSEEK_BASE_URL: str = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
-DEEPSEEK_MODEL: str = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+# 对话/通用任务模型（题目分析、论文撰写、切片标注等，成本低）
+DEEPSEEK_CHAT_MODEL: str = os.getenv("DEEPSEEK_CHAT_MODEL", "deepseek-chat")
+# 强推理模型（数学建模与求解代码生成，推理能力强但更慢更贵）
+DEEPSEEK_REASONER_MODEL: str = os.getenv("DEEPSEEK_REASONER_MODEL", "deepseek-reasoner")
+# 向后兼容别名：旧代码仍可引用 DEEPSEEK_MODEL（等同 chat 模型）
+DEEPSEEK_MODEL: str = DEEPSEEK_CHAT_MODEL
 
 # ===== 路径配置 =====
 OUTPUTS_DIR: Path = BASE_DIR / "outputs"
@@ -38,28 +43,39 @@ CHROMA_COLLECTION: str = "cumcm_papers"  # 向量库 collection 名称
 # ===== 执行参数 =====
 CODE_EXEC_TIMEOUT: int = 180  # 生成代码的默认执行超时（秒），可在 run_code 调用时覆盖
 LLM_TIMEOUT: int = 120  # LLM 请求超时（秒）
+# 强推理模型（reasoner）响应较慢，单独放宽超时；可在 .env 覆盖
+LLM_REASONER_TIMEOUT: int = int(os.getenv("LLM_REASONER_TIMEOUT", "300"))
 LLM_MAX_RETRIES: int = 3  # LLM 调用失败重试次数
 
 if not DEEPSEEK_API_KEY:
     logger.warning("未检测到 DEEPSEEK_API_KEY，请在 .env 中配置后再调用 LLM。")
 
 
-def get_llm_client() -> OpenAI:
+def get_llm_client(model: str | None = None) -> OpenAI:
     """创建并返回配置好的 DeepSeek LLM 客户端。
 
     使用 openai SDK 连接 DeepSeek（openai 兼容接口），便于后续切换模型。
     API Key 从环境变量读取，不在代码中硬编码。
 
+    注意：DeepSeek/OpenAI 接口在每次 ``chat.completions.create(model=...)`` 处指定
+    模型，本函数的 ``model`` 参数仅用于按模型选择合适的请求超时——reasoner 模型
+    响应更慢，会使用更长的 ``LLM_REASONER_TIMEOUT``，其余模型使用 ``LLM_TIMEOUT``。
+
+    Args:
+        model: 即将调用的模型名（如 DEEPSEEK_REASONER_MODEL），仅用于选择超时；
+            为 None 时按普通超时处理。
+
     Returns:
-        已配置 base_url 与 api_key 的 OpenAI 客户端实例。
+        已配置 base_url、api_key 与超时的 OpenAI 客户端实例。
 
     Raises:
         RuntimeError: 未配置 DEEPSEEK_API_KEY 时抛出。
     """
     if not DEEPSEEK_API_KEY:
         raise RuntimeError("未配置 DEEPSEEK_API_KEY，请在 .env 中设置后重试。")
+    timeout = LLM_REASONER_TIMEOUT if model == DEEPSEEK_REASONER_MODEL else LLM_TIMEOUT
     return OpenAI(
         api_key=DEEPSEEK_API_KEY,
         base_url=DEEPSEEK_BASE_URL,
-        timeout=LLM_TIMEOUT,
+        timeout=timeout,
     )
