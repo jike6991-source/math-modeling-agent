@@ -123,3 +123,60 @@ def run_code(code: str, timeout: int = CODE_EXEC_TIMEOUT, workdir: Path | None =
     result["artifacts"] = sorted(str(p) for p in (after - before))
 
     return result
+
+
+def parse_chart_status(stdout: str, workdir: Path) -> dict:
+    """解析代码输出中的图表生成状态标记。
+
+    扫描 stdout 中的 [CHART_OK:xxx.png] 和 [CHART_FAIL:xxx.png] 标记，
+    结合 workdir 中实际存在的 PNG 文件，返回成功/失败分类。
+
+    Args:
+        stdout: 代码执行的标准输出。
+        workdir: 代码运行的工作目录。
+
+    Returns:
+        {
+            "succeeded": ["图1_xxx.png", ...],
+            "failed": [
+                {"name": "图2_xxx.png", "traceback": "...完整错误栈..."},
+                ...
+            ]
+        }
+    """
+    import re
+
+    succeeded: list[str] = []
+    failed: list[dict] = []
+
+    lines = stdout.split("\n")
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        ok_match = re.search(r"\[CHART_OK:(.+?\.png)\]", line)
+        fail_match = re.search(r"\[CHART_FAIL:(.+?\.png)\]", line)
+        if ok_match:
+            succeeded.append(ok_match.group(1))
+        elif fail_match:
+            chart_name = fail_match.group(1)
+            tb_lines: list[str] = []
+            i += 1
+            while i < len(lines):
+                if "[CHART_OK:" in lines[i] or "[CHART_FAIL:" in lines[i]:
+                    i -= 1
+                    break
+                tb_lines.append(lines[i])
+                i += 1
+            failed.append({
+                "name": chart_name,
+                "traceback": "\n".join(tb_lines).strip(),
+            })
+        i += 1
+
+    # 兜底：检查 workdir 中实际存在但未被标记的 PNG（兼容未加标记的旧代码）
+    existing_pngs = {p.name for p in workdir.glob("*.png")} if workdir.exists() else set()
+    for png in existing_pngs:
+        if png not in succeeded and not any(f["name"] == png for f in failed):
+            succeeded.append(png)
+
+    return {"succeeded": succeeded, "failed": failed}

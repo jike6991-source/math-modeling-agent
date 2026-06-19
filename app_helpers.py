@@ -178,6 +178,70 @@ def run_pipeline_staged(
                        "artifacts": [], "timeout": False, "returncode": None}
         st.write(f"⚠ 代码执行异常：{exc}")
 
+    # 阶段 4.5：图表自动修复循环（最多 3 轮）
+    CHART_REPAIR_MAX_ROUNDS = 3
+    try:
+        from tools.code_runner import parse_chart_status
+        from agents.chart_repairer import generate_repair_code
+
+        chart_status = parse_chart_status(
+            exec_result.get("stdout", ""), charts_dir
+        )
+        failed_charts = chart_status["failed"]
+
+        for repair_round in range(1, CHART_REPAIR_MAX_ROUNDS + 1):
+            if not failed_charts:
+                break
+            status.update(
+                label=f"阶段 4.5：修复失败图表（第 {repair_round}/{CHART_REPAIR_MAX_ROUNDS} 轮，"
+                      f"剩余 {len(failed_charts)} 张）…"
+            )
+            st.write(
+                f"🔧 第 {repair_round} 轮修复：{', '.join(f['name'] for f in failed_charts)}"
+            )
+            try:
+                repair_code = generate_repair_code(
+                    model_result["solver_code"], failed_charts
+                )
+                if not repair_code.strip():
+                    st.write("⚠ LLM 返回空修复代码，跳过本轮")
+                    break
+                repair_result = run_code(
+                    repair_code, timeout=60, workdir=charts_dir
+                )
+                repair_status = parse_chart_status(
+                    repair_result.get("stdout", ""), charts_dir
+                )
+                if repair_status["succeeded"]:
+                    st.write(
+                        f"  ✓ 本轮修复成功：{', '.join(repair_status['succeeded'])}"
+                    )
+                failed_charts = repair_status["failed"]
+                for png in repair_status["succeeded"]:
+                    png_path = str(charts_dir / png)
+                    if png_path not in exec_result["artifacts"]:
+                        exec_result["artifacts"].append(png_path)
+                if repair_result.get("stderr"):
+                    logger.debug("修复代码 stderr: %s", repair_result["stderr"][:500])
+            except Exception as repair_exc:
+                logger.warning("第 %d 轮修复异常：%s", repair_round, repair_exc)
+                st.write(f"  ⚠ 修复异常：{repair_exc}")
+                break
+
+        total_pngs = len(list(charts_dir.glob("*.png")))
+        if failed_charts:
+            st.write(
+                f"⚠ 经过 {CHART_REPAIR_MAX_ROUNDS} 轮修复仍有 {len(failed_charts)} 张图表失败："
+                f" {', '.join(f['name'] for f in failed_charts)}"
+            )
+        elif total_pngs > 0:
+            st.write(f"✓ 所有 {total_pngs} 张图表均已生成")
+
+    except ImportError:
+        logger.debug("图表修复模块不可用，跳过自动修复")
+    except Exception as exc:
+        logger.warning("图表修复循环异常（不影响后续流程）：%s", exc)
+
     # 阶段 5：撰写论文
     status.update(label="阶段 5/6：撰写论文…")
     try:
