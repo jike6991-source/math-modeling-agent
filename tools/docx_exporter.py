@@ -43,20 +43,38 @@ def _setup(doc: Document) -> None:
     sp.set(qn("w:lineRule"), "auto")
     pPr.append(sp)
 
-def _inline(para, text: str, bold: bool = False) -> None:
-    """解析 **bold** 与 $inline$ 后将文本分段添加为 runs。"""
-    for part in re.split(r"(\*\*.*?\*\*|\$[^$]+\$)", text):
+def _inline(para, text: str, bold: bool = False, fdir: Path | None = None) -> None:
+    """解析 **bold**、$inline$、\\(...\\) 后将文本分段添加为 runs。
+    行内公式优先渲染为 PNG 图片内嵌（与正文同高），失败则回退为斜体文本。
+    """
+    for part in re.split(r"(\*\*.*?\*\*|\\\(.*?\\\)|\$[^$]+\$)", text):
         if part.startswith("**") and part.endswith("**") and len(part) > 4:
             run = para.add_run(part[2:-2])
             run.bold = True
-        elif part.startswith("$") and part.endswith("$") and len(part) > 2:
-            run = para.add_run(part[1:-1])
-            run.italic = True
+            if bold:
+                run.bold = True
+            _font(run)
+        elif (part.startswith("\\(") and part.endswith("\\)") and len(part) > 4) or \
+             (part.startswith("$") and part.endswith("$") and len(part) > 2):
+            latex = part[2:-2] if part.startswith("\\(") else part[1:-1]
+            rendered = False
+            if fdir is not None:
+                img = fdir / f"i{abs(hash(latex)) % 10 ** 9}.png"
+                if render_formula(latex, img):
+                    r = para.add_run()
+                    r.add_picture(str(img), height=Pt(_BODY_PT))
+                    rendered = True
+            if not rendered:
+                run = para.add_run(latex)
+                run.italic = True
+                if bold:
+                    run.bold = True
+                _font(run)
         else:
             run = para.add_run(part)
-        if bold:
-            run.bold = True
-        _font(run)
+            if bold:
+                run.bold = True
+            _font(run)
 
 def _heading(doc: Document, text: str, level: int) -> None:
     """添加各级加粗标题段落。"""
@@ -66,7 +84,7 @@ def _heading(doc: Document, text: str, level: int) -> None:
     run.bold = True
     _font(run, _H_PT.get(level, _BODY_PT))
 
-def _table(doc: Document, rows: list[list[str]]) -> None:
+def _table(doc: Document, rows: list[list[str]], fdir: Path | None = None) -> None:
     """添加带边框的表格，首行加粗（使用 Table Grid 内置样式）。"""
     if not rows:
         return
@@ -78,7 +96,7 @@ def _table(doc: Document, rows: list[list[str]]) -> None:
             if ci < ncols:
                 cell = t.rows[ri].cells[ci]
                 cell.paragraphs[0].clear()
-                _inline(cell.paragraphs[0], ct.strip(), bold=(ri == 0))
+                _inline(cell.paragraphs[0], ct.strip(), bold=(ri == 0), fdir=fdir)
 
 def _formula(doc: Document, latex: str, fdir: Path) -> None:
     """渲染显示公式为居中图片，失败则插入居中斜体原文本。"""
@@ -174,7 +192,7 @@ def export_docx(markdown: str, out_path: Path, base_dir: Path) -> Path:
                     if not all(re.match(r"^[-:]+$", c.strip()) for c in cells):
                         trows.append(cells)
                     i += 1
-                _table(doc, trows)
+                _table(doc, trows, fdir=fdir)
                 continue
 
             # 图片 ![alt](path)，下一非空行若是 **caption** 则用作图注
@@ -208,7 +226,7 @@ def export_docx(markdown: str, out_path: Path, base_dir: Path) -> Path:
 
             # 普通段落
             p = doc.add_paragraph()
-            _inline(p, raw)
+            _inline(p, raw, fdir=fdir)
             i += 1
 
     doc.save(str(out_path))

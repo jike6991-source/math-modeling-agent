@@ -7,6 +7,8 @@
 ## 技术栈
 - Python 3.11+
 - LLM: DeepSeek API（openai兼容格式，base_url: https://api.deepseek.com）
+  - 模型：`deepseek-v4-pro`（强推理，建模/代码生成）/ `deepseek-v4-flash`（快速，轻量任务）
+  - 注意：旧模型名 `deepseek-reasoner` 已映射为 flash，不再使用
 - RAG: ChromaDB + BGE-small-zh-v1.5 embeddings（Phase 2）
 - 图表: matplotlib（中文显示用 SimHei 字体）
 - 论文输出: python-docx 或 LaTeX（Phase 2）

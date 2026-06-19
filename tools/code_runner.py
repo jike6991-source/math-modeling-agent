@@ -11,6 +11,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+import autopep8
+
 from config import CODE_EXEC_TIMEOUT, OUTPUTS_DIR
 
 logger = logging.getLogger(__name__)
@@ -45,6 +47,13 @@ def run_code(code: str, timeout: int = CODE_EXEC_TIMEOUT, workdir: Path | None =
 
     run_dir = workdir or OUTPUTS_DIR
     run_dir.mkdir(parents=True, exist_ok=True)
+
+    # 格式化：修复 reasoner 生成代码的缩进/空白问题，避免 IndentationError
+    try:
+        code = autopep8.fix_code(code, options={"aggressive": 1, "max_line_length": 120})
+        logger.debug("autopep8 格式化完成")
+    except Exception as _e:
+        logger.warning("autopep8 格式化失败，使用原始代码：%s", _e)
 
     # 记录执行前已存在的文件（递归），用于事后识别新增产物；
     # 递归是因为生成代码可能把图表存到自建的子目录里。

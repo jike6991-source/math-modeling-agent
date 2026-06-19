@@ -4,9 +4,11 @@ python-dotenv    # 加载 .env 配置
 matplotlib       # 图表生成（中文字体 SimHei）
 python-docx      # 论文输出（docx）
 pytest           # 测试
+autopep8         # 执行前格式化 reasoner 生成的代码（修复缩进错误）
 
 # ===== 建模求解 =====
 pulp             # 整数/线性规划求解
+ortools          # CP-SAT 约束规划（排班/调度类问题）
 statsmodels      # 时间序列（ARIMA 等）
 
 # ===== Streamlit 前端 =====
