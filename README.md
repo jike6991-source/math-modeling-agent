@@ -1,169 +1,158 @@
-# Math Modeling Agent / 数学建模自动化 Agent
+# 数学建模 Agent（Math Modeling Agent）
 
-> 输入一道数学建模题目，自动产出完整建模分析报告（数学模型、可运行代码、图表、国赛论文）。
-> Targeting CUMCM (China Undergraduate Mathematical Contest in Modeling).
-
----
-
-## English Summary
-
-**Math Modeling Agent** is an automated pipeline for mathematical modeling competitions
-(CUMCM). Given a problem statement, it runs a multi-agent workflow — **analyze → model →
-execute → write** — and outputs a complete paper with mathematical models, runnable Python
-code, generated charts, and a CUMCM-style report.
-
-- **LLM**: DeepSeek (via the OpenAI-compatible SDK, easy to swap models)
-- **Agents**: `analyzer` (problem typing & variable extraction) → `modeler` (math model +
-  solver code) → `reporter` (paper writing)
-- **Tools**: sandboxed code execution (`subprocess`, configurable timeout) + matplotlib charts
-- **Output**: each problem gets its own folder under `projects/` holding all artifacts
-
-See the Chinese sections below for full documentation.
-
----
+> 端到端自动化数学建模竞赛解题系统：从题目输入到论文输出，全链路 AI 驱动。
 
 ## 项目简介
 
-数学建模自动化 Agent：输入建模题目，自动完成 **题目分析 → 数学建模 → 代码执行 → 论文撰写**
-全流程，输出含数学模型、可运行求解代码、图表与国赛风格论文的完整报告。目标比赛为
-**全国大学生数学建模竞赛（CUMCM）**。
+面向全国大学生数学建模竞赛（CUMCM）的 AI Agent 系统，输入题目原文和数据附件，自动完成分析→检索→建模→求解→论文撰写→Word导出的完整流程。
 
-## 功能特性
-
-- 🧠 **题目智能分析**：自动识别题型（优化/预测/评价/分类）、提取关键变量、推荐建模方法
-- 📐 **自动建模**：生成数学模型（假设、符号、目标函数、约束）与自包含的 Python 求解代码
-- ▶️ **安全代码执行**：`subprocess` 隔离运行生成代码，超时可配置（默认 180 秒），自动捕获输出与图表
-- 📊 **图表生成**：matplotlib 出图，内置中文字体（SimHei）配置
-- 📄 **论文撰写**：按国赛模板生成结构化论文，结合数值结论与图表
-- 🗂 **按题归档**：每道题在 `projects/<题名>/` 下独立存放全部产物
-- 🔌 **模型可替换**：基于 OpenAI 兼容接口，便于切换其他 LLM
-
-## 技术架构
-
-```mermaid
-flowchart TD
-    A[题目原文 problem.md] --> B[analyzer<br/>题目分析]
-    B -->|analysis.json<br/>题型/变量/方法| C[modeler<br/>数学建模]
-    C -->|model.md + solver.py| D[code_runner<br/>隔离执行]
-    D -->|stdout + charts/*.png| E[reporter<br/>论文撰写]
-    C -->|数学模型| E
-    B -->|分析结果| E
-    E --> F[paper.md<br/>国赛论文]
-
-    subgraph LLM[DeepSeek API · OpenAI 兼容]
-        B
-        C
-        E
-    end
-
-    subgraph OUT[projects/题名/]
-        A
-        F
-    end
-```
-
-- **编排层**：`main.py` 串联各 Agent，按字典传递中间结果
-- **Agent 层**：`agents/analyzer.py`、`agents/modeler.py`、`agents/reporter.py`
-- **工具层**：`tools/code_runner.py`（代码执行）、`tools/chart_generator.py`（图表，规划中）
-- **配置层**：`config.py` 统一加载 `.env` 与路径/超时常量，提供 `get_llm_client()`
-
-## 快速开始
-
-### 1. 安装依赖
-
-```bash
-pip install -r requirements.txt
-```
-
-### 2. 配置 `.env`
-
-在项目根目录创建 `.env`（不会提交 git）：
-
-```ini
-DEEPSEEK_API_KEY=sk-your-key-here
-# 以下为可选，均有默认值
-DEEPSEEK_BASE_URL=https://api.deepseek.com
-DEEPSEEK_MODEL=deepseek-chat
-```
-
-### 3. 运行示例
-
-将题目写入一个文本文件（如 `problem.txt`），然后运行：
-
-```bash
-python main.py 2023A_定日镜 problem.txt
-# 可选：自定义代码执行超时（秒）
-python main.py 2023A_定日镜 problem.txt --timeout 240
-```
-
-运行完成后，产物位于 `projects/2023A_定日镜/`：
+## 系统架构
 
 ```
-projects/2023A_定日镜/
-├── problem.md      # 题目原文
-├── analysis.json   # 题目分析结果
-├── model.md        # 数学模型描述
-├── solver.py       # 求解代码
-├── charts/         # 图表 PNG（git 忽略，可重新生成）
-└── paper.md        # 最终论文
+题目输入 (PDF/DOCX/TXT/MD)
+    │
+    ▼
+┌─────────────┐     ┌──────────────┐
+│  Analyzer    │────▶│  RAG Retriever│  ← 华为杯优秀论文知识库 (1991 chunks)
+│  题目分析    │     │  参考检索      │
+└──────┬──────┘     └──────┬───────┘
+       │                    │
+       ▼                    ▼
+┌─────────────────────────────┐
+│         Modeler             │
+│  数学模型建立 + 求解代码生成   │
+└──────────┬──────────────────┘
+           │
+           ▼
+┌─────────────────────────────┐
+│       Code Runner           │
+│  隔离执行 + autopep8 格式化   │
+│  超时保护 (480s)             │
+└──────────┬──────────────────┘
+           │
+           ▼
+┌─────────────────────────────┐
+│     Chart Repair Loop       │  ← NEW: 图表自动修复循环
+│  失败图表收集报错             │
+│  → LLM 生成修复代码          │
+│  → 重新执行（最多3轮）        │
+└──────────┬──────────────────┘
+           │
+           ▼
+┌─────────────────────────────┐
+│        Reporter             │
+│  国赛模板论文撰写             │
+└──────────┬──────────────────┘
+           │
+           ▼
+┌─────────────────────────────┐
+│      DOCX Exporter          │
+│  pandoc + MiKTeX             │
+│  LaTeX公式 → Word原生OOXML   │
+└─────────────────────────────┘
 ```
 
-> 仓库内 `projects/demo_生产线优化/` 是一个端到端示例，可直接参考。
+## 核心特性
+
+- **全链路 Pipeline**：Analyzer → Retriever → Modeler → Code Runner → Reporter → DOCX Exporter，六阶段自动化
+- **RAG 知识库**：24篇华为杯优秀论文 / 1991 chunks，BGE-small-zh-v1.5 embedding + ChromaDB 向量检索
+- **图表自动修复循环**：求解代码执行后，成功的图保留，失败的图收集 traceback 发给 LLM 修复，最多重试3轮，修复代码从 `_results.pkl` 加载结果只画图不重新求解
+- **代码执行安全**：subprocess 隔离 + 480秒超时 + autopep8 自动格式化 + Agg 后端防阻塞
+- **MILP 建模防护**：prompt 层面禁止逐个体二进制变量（防止变量爆炸），要求聚合整数变量建模，变量规模控制在 5000 以内
+- **LaTeX 公式修复**：docx_exporter 内置 5 种下划线损坏模式的自动修复，pandoc 转换为 Word 原生可编辑公式
+- **增量结果保存**：每个子问题求解后立即序列化到 `_results.pkl`，超时不丢失已有结果
+- **多格式题目输入**：支持 PDF / DOCX / TXT / Markdown 上传，自动提取文本
+- **Streamlit Web UI**：实时进度显示、图表预览、论文下载、历史项目管理
+
+## 技术栈
+
+| 组件 | 技术选型 |
+|------|---------|
+| LLM | DeepSeek V4 Pro（分析/建模/论文/修复） |
+| 向量库 | ChromaDB + BGE-small-zh-v1.5 |
+| 求解器 | PuLP (CBC) / OR-Tools (CP-SAT) / SciPy |
+| 文档转换 | pandoc 3.10 + MiKTeX 25.12 |
+| 代码格式化 | autopep8 |
+| 前端 | Streamlit |
+| PDF 解析 | PyMuPDF |
 
 ## 项目结构
 
 ```
 math-modeling-agent/
-├── CLAUDE.md              # 项目约定与设计说明
-├── README.md             # 本文件
-├── .env                  # API 密钥（不提交 git）
-├── requirements.txt
-├── config.py             # 配置加载 + get_llm_client()
-├── main.py               # 入口，pipeline 编排
 ├── agents/
-│   ├── analyzer.py       # 题目分析：识别题型、提取变量、推荐方法
-│   ├── modeler.py        # 建模：生成数学模型与求解代码
-│   └── reporter.py       # 报告：按模板撰写国赛论文
+│   ├── analyzer.py          # 题目分析 Agent
+│   ├── modeler.py           # 建模 Agent（含 MILP 防护规则）
+│   ├── reporter.py          # 论文撰写 Agent（含 LaTeX 公式规范）
+│   └── chart_repairer.py    # 图表修复 Agent（NEW）
+├── rag/
+│   ├── retriever.py         # 向量检索 + 方法提取
+│   ├── chunker.py           # 论文切片
+│   ├── indexer.py           # 向量入库
+│   ├── annotator.py         # 片段标注
+│   └── store.py             # ChromaDB 存储
 ├── tools/
-│   ├── code_runner.py    # subprocess 隔离执行代码，超时/产物捕获
-│   └── chart_generator.py# matplotlib 图表工具（规划中）
-├── rag/                  # Phase 2：论文检索（规划中）
-│   ├── indexer.py
-│   └── retriever.py
+│   ├── code_runner.py       # 代码隔离执行 + 图表状态解析
+│   ├── docx_exporter.py     # Markdown → Word（含公式修复）
+│   └── chart_generator.py   # 图表工具
 ├── templates/
-│   └── cumcm_template.md # 国赛论文 Markdown 模板
-├── projects/             # 每题一子目录存放产物（图表忽略）
-├── outputs/              # 临时产物（不提交 git）
-└── tests/
-    └── test_pipeline.py  # 端到端测试
+│   └── cumcm_template.md    # 国赛论文模板
+├── knowledge/
+│   ├── papers/              # 原始 PDF（不入 git）
+│   ├── processed/           # 切片中间产物
+│   └── chroma_db/           # 向量库持久化（不入 git）
+├── app.py                   # Streamlit 主入口
+├── app_helpers.py           # Pipeline 分阶段执行 + 修复循环
+├── config.py                # 配置管理
+├── main.py                  # CLI 入口
+└── requirements.txt         # 依赖
 ```
 
-## 开发计划
+## 快速开始
 
-- ✅ **Phase 1（已完成）**：最小 pipeline 跑通 —— 题目分析 → 建模代码 → 图表 → 国赛论文，
-  产物按题归档。
-- 🔜 **Phase 2：RAG 论文检索**
-  - 用 ChromaDB + BGE-small-zh-v1.5 对历年优秀论文切片入库（`rag/indexer.py`）
-  - 建模时检索相似论文片段（`rag/retriever.py`），为 modeler/reporter 提供参考增强
-  - 引入执行失败/超时的反馈重试环，将报错回灌给 modeler 自动修正代码
-- 🔮 **Phase 3：多 LLM 协作**
-  - 不同 Agent 使用不同模型（如建模用强推理模型、撰写用长文本模型）
-  - 多模型对同一题给出多套方案，交叉评审择优
-  - 评审 Agent：对生成的模型与论文做质量打分与改进建议
+### 1. 环境准备
 
-## 技术栈
+```bash
+# 克隆项目
+git clone https://github.com/jike6991-source/math-modeling-agent.git
+cd math-modeling-agent
 
-- Python 3.11+
-- DeepSeek API（OpenAI 兼容 SDK）
-- matplotlib（中文字体 SimHei）
-- python-docx / LaTeX（论文输出，Phase 2）
-- ChromaDB + BGE embeddings（RAG，Phase 2）
+# 安装依赖
+pip install -r requirements.txt
 
-## 约定
+# 安装 pandoc 和 MiKTeX（Word 导出需要）
+# Windows: winget install pandoc MiKTeX
+# macOS: brew install pandoc mactex
+```
 
-详见 [CLAUDE.md](CLAUDE.md)：代码规范（中文 docstring、类型注解、logging、API 重试）、
-设计决策与目录约定。
+### 2. 配置
 
----
+在项目根目录创建 `.env` 文件：
 
-*本项目用于学习与竞赛辅助，生成内容需人工复核后使用。*
+```env
+DEEPSEEK_API_KEY=your_api_key_here
+```
+
+### 3. 启动
+
+```bash
+# Web UI
+streamlit run app.py
+
+# CLI
+python main.py --problem "题目文本" --data data.csv
+```
+
+## 已知局限与后续计划
+
+- [ ] RAG 知识库扩充：加入国赛（CUMCM）历年论文，覆盖排班/路径/多目标等题型
+- [ ] 混合检索：BM25 + 向量 + RRF 融合 + Cross-Encoder 精排
+- [ ] 建模技巧知识库：按题型整理建模范式/反模式文档，作为 RAG 专门分区
+- [ ] Analyzer 规模预估：识别优化类题目后估算变量规模，注入建模约束
+- [ ] 代码自修复循环：求解代码本身的 bug 修复（当前仅修复图表）
+
+## 开发者
+
+黄杰 (杰哥) — 齐齐哈尔大学 信息与计算科学 2024级
+
+GitHub: [jike6991-source](https://github.com/jike6991-source)
