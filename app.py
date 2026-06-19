@@ -7,7 +7,7 @@ import pandas as pd
 import streamlit as st
 
 from app_helpers import (
-    extract_pdf_text,
+    extract_file_text,
     get_project_list,
     get_rag_chunk_count,
     load_project,
@@ -38,12 +38,15 @@ def render_sidebar() -> None:
 def render_input_section() -> str:
     """渲染题目输入区，支持文本输入与 PDF 上传，返回当前题目文本。"""
     st.subheader("题目输入")
-    pdf_file = st.file_uploader("上传题目 PDF（自动提取文本）", type=["pdf"])
+    pdf_file = st.file_uploader(
+        "上传题目文件（PDF / Word / 文本，自动提取）",
+        type=["pdf", "doc", "docx", "txt", "md"],
+    )
     if pdf_file is not None:
         try:
-            extracted = extract_pdf_text(pdf_file)
+            extracted = extract_file_text(pdf_file)
             st.session_state["problem_text"] = extracted
-            st.success(f"PDF 解析成功，共提取 {len(extracted)} 字符")
+            st.success(f"文件解析成功，共提取 {len(extracted)} 字符")
         except ValueError as exc:
             st.error(str(exc))
 

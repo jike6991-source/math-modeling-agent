@@ -41,7 +41,7 @@ EMBEDDING_MODEL: str = "BAAI/bge-small-zh-v1.5"  # 中文 embedding 模型
 CHROMA_COLLECTION: str = "cumcm_papers"  # 向量库 collection 名称
 
 # ===== 执行参数 =====
-CODE_EXEC_TIMEOUT: int = 180  # 生成代码的默认执行超时（秒），可在 run_code 调用时覆盖
+CODE_EXEC_TIMEOUT: int = 480  # 生成代码的默认执行超时（秒），可在 run_code 调用时覆盖
 LLM_TIMEOUT: int = 120  # LLM 请求超时（秒）
 # 强推理模型（reasoner）响应较慢，单独放宽超时；可在 .env 覆盖
 LLM_REASONER_TIMEOUT: int = int(os.getenv("LLM_REASONER_TIMEOUT", "300"))

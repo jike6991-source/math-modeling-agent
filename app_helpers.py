@@ -14,14 +14,33 @@ from tools.code_runner import run_code
 logger = logging.getLogger(__name__)
 
 
-def extract_pdf_text(uploaded_file) -> str:
-    """从上传的 PDF 文件提取纯文本。"""
-    try:
-        import fitz  # PyMuPDF
-        doc = fitz.open(stream=uploaded_file.read(), filetype="pdf")
-        return "\n".join(page.get_text() for page in doc)
-    except Exception as exc:
-        raise ValueError(f"PDF 解析失败：{exc}") from exc
+def extract_file_text(uploaded_file) -> str:
+    """从上传文件提取纯文本，支持 PDF / DOCX / TXT / MD。"""
+    name = uploaded_file.name.lower()
+    if name.endswith(".pdf"):
+        try:
+            import fitz  # PyMuPDF
+            doc = fitz.open(stream=uploaded_file.read(), filetype="pdf")
+            return "\n".join(page.get_text() for page in doc)
+        except Exception as exc:
+            raise ValueError(f"PDF 解析失败：{exc}") from exc
+    elif name.endswith(".docx"):
+        try:
+            from docx import Document
+            import io
+            doc = Document(io.BytesIO(uploaded_file.read()))
+            return "\n".join(p.text for p in doc.paragraphs if p.text.strip())
+        except Exception as exc:
+            raise ValueError(f"DOCX 解析失败：{exc}") from exc
+    elif name.endswith(".doc"):
+        raise ValueError(".doc 格式不支持直接解析，请另存为 .docx 后重新上传。")
+    elif name.endswith((".txt", ".md")):
+        try:
+            return uploaded_file.read().decode("utf-8")
+        except UnicodeDecodeError:
+            return uploaded_file.read().decode("gbk", errors="replace")
+    else:
+        raise ValueError(f"不支持的文件格式：{uploaded_file.name}")
 
 
 def get_rag_chunk_count() -> int | None:
