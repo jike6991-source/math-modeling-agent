@@ -95,6 +95,45 @@ def export_docx(markdown: str, out_path: Path, base_dir: Path) -> Path:
             logger.warning("pandoc stderr: %s", result.stderr.strip())
 
         logger.info("docx 导出完成：%s", out_path)
+
+        # ---- 后处理：修复表格跨页断裂 ----
+        try:
+            from docx import Document
+            from docx.oxml.ns import qn
+            from lxml import etree
+
+            doc = Document(str(out_path))
+
+            for table in doc.tables:
+                for row in table.rows:
+                    tr = row._tr
+                    trPr = tr.find(qn('w:trPr'))
+                    if trPr is None:
+                        trPr = etree.SubElement(tr, qn('w:trPr'))
+                        tr.insert(0, trPr)
+                    cant_split = trPr.find(qn('w:cantSplit'))
+                    if cant_split is None:
+                        etree.SubElement(trPr, qn('w:cantSplit'))
+
+            body = doc.element.body
+            elements = list(body)
+            for i, el in enumerate(elements):
+                if el.tag == qn('w:tbl') and i > 0:
+                    prev = elements[i - 1]
+                    if prev.tag == qn('w:p'):
+                        pPr = prev.find(qn('w:pPr'))
+                        if pPr is None:
+                            pPr = etree.SubElement(prev, qn('w:pPr'))
+                            prev.insert(0, pPr)
+                        keep_next = pPr.find(qn('w:keepNext'))
+                        if keep_next is None:
+                            etree.SubElement(pPr, qn('w:keepNext'))
+
+            doc.save(str(out_path))
+            logger.info("表格跨页修复完成")
+        except Exception as exc:
+            logger.warning("表格跨页修复失败（不影响主流程）：%s", exc)
+
         return out_path
 
     finally:
