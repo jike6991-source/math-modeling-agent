@@ -17,7 +17,21 @@
 
 ## 效果展示
 
-> 📸 截图待补充：将 Streamlit 界面截图、公式渲染效果、图表输出示例放入 `docs/images/` 目录后在此引用。
+### Streamlit 操作界面
+
+<p align="center"><img src="docs/images/ui_main.png" width="80%"></p>
+
+### 项目产出文件
+
+<p align="center"><img src="docs/images/project_output.png" width="80%"></p>
+
+### 自动生成的图表示例
+
+<p align="center"><img src="docs/images/chart_demo.png" width="80%"></p>
+
+### Word 导出公式渲染效果
+
+<p align="center"><img src="docs/images/formula_demo.png" width="80%"></p>
 
 ## 系统架构
 
