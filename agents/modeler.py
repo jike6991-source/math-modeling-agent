@@ -1,7 +1,4 @@
-"""建模 Agent。
-
-根据题目原文与分析结果，调用 DeepSeek 生成数学模型和可执行的求解代码。
-"""
+"""建模 Agent — 两阶段生成：方法规划（JSON验证）→ 代码生成（方法已锁定）。"""
 
 import json
 import logging
@@ -45,7 +42,141 @@ def _preview_data_file(path: str, max_rows: int = _DATA_PREVIEW_ROWS) -> str:
         logger.warning("数据文件预览失败 %s：%s", path, exc)
         return f"（预览失败：{exc}）"
 
-_SYSTEM_PROMPT: str = (
+
+# ── 第一阶段：方法规划 ────────────────────────────────────────────────────────
+
+_PLAN_SYSTEM_PROMPT: str = (
+    "你是数学建模方法规划专家。根据题目和分析结果，选择最合适的求解方案。\n\n"
+    "只输出纯 JSON，不要任何其他文字、Markdown围栏或解释：\n"
+    "{\n"
+    '  "solver": "pulp" | "scipy" | "statsmodels" | "sklearn" | "networkx" | "cpsat",\n'
+    '  "variable_design": "aggregate_integer" | "continuous" | "not_applicable",\n'
+    '  "sub_problems": ["子问题1简述", "子问题2简述"],\n'
+    '  "estimated_total_vars": 预估总变量数（整数）,\n'
+    '  "approach_summary": "一句话说明整体求解思路"\n'
+    "}\n\n"
+    "方法选择指南：\n"
+    "- 排班/调度/指派/选址/背包/切割等组合优化 → solver: pulp, variable_design: aggregate_integer\n"
+    "- 连续优化/参数拟合/非线性规划 → solver: scipy, variable_design: continuous\n"
+    "- 时间序列预测/ARIMA → solver: statsmodels, variable_design: not_applicable\n"
+    "- 分类/回归/聚类/机器学习 → solver: sklearn, variable_design: not_applicable\n"
+    "- 图论/网络流/最短路 → solver: networkx, variable_design: not_applicable\n"
+    "- 纯约束满足问题（排课/数独/无优化目标）→ solver: cpsat, variable_design: not_applicable\n\n"
+    "关键约束：\n"
+    "- 有优化目标的排班/调度问题必须选 pulp，不要选 cpsat\n"
+    "- 选 pulp 时 variable_design 必须为 aggregate_integer（聚合整数变量，非逐个体二进制变量）\n"
+    "- estimated_total_vars 不应超过 5000，超过说明建模方式有问题需要简化\n"
+    "- 禁止使用：列生成、分支定价、Benders分解、Dantzig-Wolfe分解\n"
+)
+
+
+def _validate_plan(plan: dict, analysis: dict) -> list[str]:
+    """验证规划方案的合理性，返回错误列表（空列表表示通过）。
+
+    Args:
+        plan: LLM 返回的规划 JSON。
+        analysis: 题目分析结果。
+
+    Returns:
+        错误描述列表，空列表表示验证通过。
+    """
+    errors: list[str] = []
+    analysis_text = json.dumps(analysis, ensure_ascii=False).lower()
+
+    scheduling_keywords = ["排班", "调度", "指派", "排程", "轮班", "人员分配", "工人", "临时工"]
+    is_scheduling = any(kw in analysis_text for kw in scheduling_keywords)
+
+    if is_scheduling:
+        if plan.get("solver") == "cpsat":
+            errors.append(
+                "检测到排班/调度类问题但选择了cpsat。"
+                "有优化目标的排班问题必须使用pulp（聚合整数规划），而非cpsat。"
+                "请将solver改为pulp，variable_design改为aggregate_integer"
+            )
+        if plan.get("variable_design") not in ("aggregate_integer", None):
+            errors.append(
+                "排班/调度类问题的variable_design必须为aggregate_integer（聚合整数变量）。"
+                "禁止为每个工人/个体创建独立的二进制变量"
+            )
+
+    est_vars = plan.get("estimated_total_vars", 0)
+    if isinstance(est_vars, (int, float)) and est_vars > 10000:
+        errors.append(
+            f"预估变量数{est_vars}过多（上限5000），说明建模方式有问题。"
+            "请改用聚合变量减少规模"
+        )
+
+    valid_solvers = {"pulp", "scipy", "statsmodels", "sklearn", "networkx", "cpsat"}
+    if plan.get("solver") not in valid_solvers:
+        errors.append(f"solver必须为以下之一：{valid_solvers}")
+
+    return errors
+
+
+def _plan_approach(problem_text: str, analysis: dict) -> dict:
+    """第一阶段：调用 LLM 规划求解方案，带验证重试（最多3次）。
+
+    Args:
+        problem_text: 题目原文。
+        analysis: 题目分析结果。
+
+    Returns:
+        通过验证的规划方案 dict；3次均未通过则返回安全默认方案。
+    """
+    client = get_llm_client(DEEPSEEK_REASONER_MODEL)
+    error_feedback = ""
+
+    for attempt in range(1, 4):
+        user_content = (
+            f"题目摘要（前800字）：\n{problem_text[:800]}\n\n"
+            f"分析结果：\n{json.dumps(analysis, ensure_ascii=False, indent=2)}\n"
+        )
+        if error_feedback:
+            user_content += f"\n⚠ 你上一次的方案有问题：{error_feedback}\n请修正后重新输出JSON。"
+
+        try:
+            response = client.chat.completions.create(
+                model=DEEPSEEK_REASONER_MODEL,
+                messages=[
+                    {"role": "system", "content": _PLAN_SYSTEM_PROMPT},
+                    {"role": "user", "content": user_content},
+                ],
+            )
+            raw = (response.choices[0].message.content or "").strip()
+            if raw.startswith("```"):
+                raw = raw.split("\n", 1)[-1]
+                if raw.rstrip().endswith("```"):
+                    raw = raw.rstrip()[:-3]
+            plan = json.loads(raw.strip())
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("规划阶段第%d次解析失败：%s", attempt, exc)
+            error_feedback = f"JSON解析失败({exc})，请确保输出纯JSON"
+            continue
+
+        errors = _validate_plan(plan, analysis)
+        if not errors:
+            logger.info("规划阶段通过（第%d次）：%s", attempt, plan)
+            return plan
+
+        error_feedback = "；".join(errors)
+        logger.warning("规划阶段第%d次未通过：%s", attempt, error_feedback)
+
+    logger.warning("规划阶段3次均未通过，使用默认方案")
+    return {
+        "solver": "pulp",
+        "variable_design": "aggregate_integer",
+        "sub_problems": [],
+        "estimated_total_vars": 500,
+        "approach_summary": "默认聚合整数规划方案",
+    }
+
+
+# ── 第二阶段：代码生成 ────────────────────────────────────────────────────────
+
+_CODE_SYSTEM_PROMPT_TEMPLATE: str = (
+    "【已确认的求解方案 — 不可更改】\n"
+    "{locked_plan}\n"
+    "你必须严格按照上述已确认方案实现代码，不得更换求解器或变量设计方式。\n\n"
     "你是数学建模竞赛（CUMCM）的资深建模专家。"
     "请根据用户给出的题目原文及其分析结果，建立完整的数学模型，并编写可直接运行的 Python 求解代码。\n"
     "硬性要求：\n"
@@ -72,7 +203,7 @@ _SYSTEM_PROMPT: str = (
     "设置较短的求解时间上限（如 PULP_CBC_CMD(msg=False, timeLimit=20)），求解器到时返回"
     "当前可行解即可继续；避免规模过大或无时限的精确求解导致超时拿不到任何图表。\n"
     "   特别注意：排班/调度/指派类 MILP 总二进制变量数必须控制在 5000 以内，"
-    "用聚合整数变量而非逐个体二进制变量（详见第 10 条），否则 CBC 在 60 秒内不可能求解。\n"
+    "用聚合整数变量而非逐个体二进制变量（详见已确认方案），否则 CBC 在 60 秒内不可能求解。\n"
     "9. 代码结构须支持图表自动修复（严格遵守）：\n"
     "   (a) 求解阶段完成后，立即用 pickle 序列化所有求解结果到当前目录的 _results.pkl：\n"
     "       import pickle\n"
@@ -95,13 +226,6 @@ _SYSTEM_PROMPT: str = (
     "           plt.close('all')\n"
     "           print('[CHART_FAIL:图1_需求热力图.png]')\n"
     "           print(traceback.format_exc())\n"
-    "10. 整数规划建模的变量设计原则（仅适用于涉及 ILP/MILP 的题目，非ILP题目忽略此条）：\n"
-    "   - 当问题涉及大量同质个体（工人/车辆/人员/机器）的分配/排班/指派时，"
-    "严禁为每个个体创建独立的二进制变量（如 x[i,d,m] = Binary），这会导致变量数爆炸\n"
-    "   - 正确做法：使用聚合整数变量 w[(d,m)] = Integer 表示选择某模式的个体数量，"
-    "变量数 = O(天数×模式数)，通常在几千以内\n"
-    "   - 典型约束写法：lpSum(w[(d,m)] * cover[m][h][g] for m in modes) >= demand[d][h][g]\n"
-    "   - 个体总数 N 作为一个 Integer 变量出现在目标函数中，不展开为逐个体的 Binary\n"
     "11. _results.pkl 增量写入（必须严格遵守，违反等同于代码 bug）：\n"
     "   - 代码最开头就创建 _results 字典并写入基础数据（demand 等），在任何求解之前就 pickle.dump 一次\n"
     "   - 每个子问题求解完毕后立即追加该问题结果并重新 pickle.dump\n"
@@ -122,20 +246,6 @@ _SYSTEM_PROMPT: str = (
     "       _results['problem2'] = {...}\n"
     "       with open('_results.pkl','wb') as f: pickle.dump(_results, f)\n"
     "       try: 问题2图表... except: ...\n"
-    "12. 求解方法选择原则（适用于所有题型）：\n"
-    "   (a) 优先使用最简单可靠的方法，自动生成的代码必须完整可运行，"
-    "禁止写出半成品框架或用占位值（如 result=220）代替实际求解\n"
-    "   (b) 以下高级算法禁止使用，因为其实现需要手动管理迭代循环和对偶值，"
-    "自动生成的代码几乎不可能正确实现：列生成（Column Generation）、"
-    "分支定价（Branch & Price）、Benders 分解、Dantzig-Wolfe 分解\n"
-    "   (c) 按题型选择求解器：\n"
-    "     - 排班/调度/指派/选址等组合优化 → PuLP (CBC)，预生成模式集合 + 聚合整数变量\n"
-    "     - 约束满足问题（排课、数独、可行性判定）→ OR-Tools CP-SAT\n"
-    "     - 连续优化/参数拟合/非线性规划 → scipy.optimize\n"
-    "     - 时间序列预测 → statsmodels (ARIMA) 或 sklearn\n"
-    "     - 图论/网络流 → networkx 或 scipy.sparse.csgraph\n"
-    "   (d) 同一道题的不同子问题应尽量复用同一套求解框架和数据结构，"
-    "只改变模式集合或约束条件，避免混用多个求解引擎增加出错概率\n"
     "请严格按以下分段格式输出（不要用 JSON，不要给代码加 Markdown 围栏），"
     "三个标记行各自独占一行，顺序固定：\n"
     "===MODEL_DESCRIPTION===\n"
@@ -221,6 +331,7 @@ def _build_user_prompt(
 
 
 def _call_llm(
+    system_prompt: str,
     problem_text: str,
     analysis: dict,
     references: str | None = None,
@@ -229,10 +340,8 @@ def _call_llm(
 ) -> str:
     """调用 DeepSeek（reasoner）获取建模结果原始文本，带重试逻辑。
 
-    使用 deepseek-reasoner 强推理模型。该模型不支持 response_format=json_object，
-    故以分段文本返回，由 _parse_and_validate 按标记解析。
-
     Args:
+        system_prompt: 本次调用使用的 system prompt（已注入 locked_plan）。
         problem_text: 建模题目原文。
         analysis: 题目分析结果。
         references: 检索到的参考片段，可为 None。
@@ -240,7 +349,7 @@ def _call_llm(
         method_floor: RAG 参考方法下限列表，可为 None。
 
     Returns:
-        LLM 返回的原始文本（应包含 JSON）。
+        LLM 返回的原始文本。
 
     Raises:
         RuntimeError: 多次重试后仍失败时抛出。
@@ -254,7 +363,7 @@ def _call_llm(
             response = client.chat.completions.create(
                 model=DEEPSEEK_REASONER_MODEL,
                 messages=[
-                    {"role": "system", "content": _SYSTEM_PROMPT},
+                    {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
                 ],
             )
@@ -263,7 +372,7 @@ def _call_llm(
             last_error = exc
             logger.warning("建模 LLM 调用失败（第 %d/%d 次）：%s", attempt, LLM_MAX_RETRIES, exc)
             if attempt < LLM_MAX_RETRIES:
-                time.sleep(2 ** (attempt - 1))  # 指数退避：1s、2s、4s...
+                time.sleep(2 ** (attempt - 1))
 
     raise RuntimeError(f"建模 LLM 调用失败，已重试 {LLM_MAX_RETRIES} 次") from last_error
 
@@ -279,7 +388,6 @@ def _strip_code_fence(code: str) -> str:
     """
     text = code.strip()
     if text.startswith("```"):
-        # 去掉首行围栏（``` 或 ```python）
         text = text.split("\n", 1)[-1] if "\n" in text else ""
         if text.rstrip().endswith("```"):
             text = text.rstrip()[:-3]
@@ -288,10 +396,6 @@ def _strip_code_fence(code: str) -> str:
 
 def _parse_and_validate(raw: str) -> dict:
     """解析并校验 LLM 返回的分段文本。
-
-    采用 ===MODEL_DESCRIPTION===/===SOLVER_CODE===/===EXPECTED_OUTPUTS=== 分段格式
-    （而非 JSON）：reasoner 无法保证将大段 Python 代码安全转义进 JSON 字符串，
-    分段格式可避免转义破坏导致的解析失败。
 
     Args:
         raw: LLM 返回的原始分段文本。
@@ -309,16 +413,13 @@ def _parse_and_validate(raw: str) -> dict:
     model_idx = raw.find(_MARK_MODEL)
     outputs_idx = raw.find(_MARK_OUTPUTS)
 
-    # 模型描述：MODEL 标记之后到 CODE 标记之前；无 MODEL 标记则取 CODE 之前全部
     desc_start = (model_idx + len(_MARK_MODEL)) if model_idx != -1 else 0
     model_description = raw[desc_start:code_idx].strip()
 
-    # 求解代码：CODE 标记之后到 OUTPUTS 标记之前（若有）
     code_start = code_idx + len(_MARK_CODE)
     code_end = outputs_idx if outputs_idx != -1 else len(raw)
     solver_code = _strip_code_fence(raw[code_start:code_end])
 
-    # 预期产出：OUTPUTS 标记之后，按行解析（去除 - 前缀）
     expected_outputs: list[str] = []
     if outputs_idx != -1:
         for line in raw[outputs_idx + len(_MARK_OUTPUTS):].splitlines():
@@ -345,17 +446,16 @@ def build_model(
     data_files: list[str] | None = None,
     method_floor: list[str] | None = None,
 ) -> dict:
-    """生成数学模型与求解代码。
+    """两阶段生成数学模型与求解代码。
 
-    根据题目原文与分析结果，调用 DeepSeek（reasoner）建立数学模型并编写求解代码。
+    第一阶段：调用 LLM 规划求解方案（JSON），代码层面验证合理性，不通过则带错误原因重试。
+    第二阶段：将验证通过的方案注入 system prompt，再调用 LLM 生成完整求解代码。
 
     Args:
         problem_text: 建模题目原文。
-        analysis: 题目分析 Agent 的输出（problem_type、key_variables、
-            recommended_methods、recommended_libraries 等）。
-        references: 检索到的优秀论文参考片段，可选；提供时供 LLM 借鉴建模思路。
-        data_files: 题目附带数据文件的绝对路径列表，可选；非空时要求代码读取
-            真实数据、禁止使用模拟数据。
+        analysis: 题目分析 Agent 的输出。
+        references: 检索到的优秀论文参考片段，可选。
+        data_files: 题目附带数据文件的绝对路径列表，可选。
         method_floor: RAG 参考论文使用的方法列表，作为方法下限，可选。
 
     Returns:
@@ -363,6 +463,7 @@ def build_model(
         - model_description (str): Markdown 格式的数学模型
         - solver_code (str): 可独立运行的 Python 求解代码
         - expected_outputs (list[str]): 代码预期产出说明
+        - plan (dict): 第一阶段确认的方法规划
 
     Raises:
         ValueError: 输入为空，或 LLM 返回结果无法解析/校验时抛出。
@@ -379,7 +480,28 @@ def build_model(
         len(data_files or []),
         len(method_floor or []),
     )
-    raw = _call_llm(problem_text, analysis, references, data_files, method_floor)
+
+    # 第一阶段：规划
+    plan = _plan_approach(problem_text, analysis)
+
+    # 第二阶段：注入已锁定方案，生成代码
+    locked_plan_text = (
+        f"- 求解器：{plan['solver']}\n"
+        f"- 变量设计：{plan['variable_design']}\n"
+        f"- 子问题：{plan.get('sub_problems', [])}\n"
+        f"- 预估变量数：{plan.get('estimated_total_vars', '未知')}\n"
+        f"- 思路：{plan.get('approach_summary', '')}\n"
+    )
+    system_prompt = _CODE_SYSTEM_PROMPT_TEMPLATE.replace("{locked_plan}", locked_plan_text)
+
+    raw = _call_llm(system_prompt, problem_text, analysis, references, data_files, method_floor)
     result = _parse_and_validate(raw)
-    logger.info("建模完成：模型描述 %d 字符，代码 %d 字符", len(result["model_description"]), len(result["solver_code"]))
+    result["plan"] = plan
+
+    logger.info(
+        "建模完成：模型描述 %d 字符，代码 %d 字符，求解器=%s",
+        len(result["model_description"]),
+        len(result["solver_code"]),
+        plan["solver"],
+    )
     return result

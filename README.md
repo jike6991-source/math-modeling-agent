@@ -25,25 +25,30 @@
 flowchart TB
     A["📄 题目输入<br/>PDF / DOCX / TXT / MD"] --> B["🔍 Analyzer<br/>题目分析"]
     B --> C["📚 RAG Retriever<br/>知识库检索"]
-    C --> D["🧮 Modeler<br/>建模 + 代码生成"]
-    D --> E["⚙️ Code Runner<br/>隔离执行 · 480s超时"]
+    C --> D1["🧮 Modeler Phase 1<br/>方法规划（JSON）"]
+    D1 --> V{"Validator<br/>方案验证"}
+    V -->|"不通过 + 错误原因"| D1
+    V -->|"通过"| D2["🧮 Modeler Phase 2<br/>代码生成（方法已锁定）"]
+    D2 --> E["⚙️ Code Runner<br/>隔离执行 · 480s超时"]
     E --> F{"图表检查"}
     F -->|"有失败图表"| G["🔧 Chart Repairer<br/>LLM修复 · 最多3轮"]
     G --> F
     F -->|"全部成功或达上限"| H["📝 Reporter<br/>论文撰写"]
     H --> I["📄 DOCX Exporter<br/>pandoc + MiKTeX"]
-    
+
     K[("🗄️ RAG 知识库<br/>24篇论文 / 1991 chunks")] -.-> C
     L[("💾 _results.pkl<br/>增量保存")] -.-> G
 
     style A fill:#4CAF50,color:#fff
     style I fill:#2196F3,color:#fff
     style G fill:#FF9800,color:#fff
+    style V fill:#E91E63,color:#fff
 ```
 
 ## 核心特性
 
-- **全链路 Pipeline**：Analyzer → Retriever → Modeler → Code Runner → Reporter → DOCX Exporter，六阶段自动化
+- **两阶段建模**：第一阶段 LLM 规划求解方案（输出 JSON），Validator 代码层面验证方案合理性（不通过则带错误原因重试），第二阶段锁定方案后生成求解代码，从根本上避免 LLM 选错求解器或变量设计
+- **全链路 Pipeline**：Analyzer → Retriever → Modeler(×2) → Code Runner → Reporter → DOCX Exporter，六阶段自动化
 - **RAG 知识库**：24篇华为杯优秀论文 / 1991 chunks，BGE-small-zh-v1.5 embedding + ChromaDB 向量检索
 - **图表自动修复循环**：求解代码执行后，成功的图保留，失败的图收集 traceback 发给 LLM 修复，最多重试3轮，修复代码从 `_results.pkl` 加载结果只画图不重新求解
 - **MILP 建模防护**：prompt 层面禁止逐个体二进制变量（防止变量爆炸），要求聚合整数变量建模，变量规模控制在 5000 以内
