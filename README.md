@@ -103,6 +103,204 @@ math-modeling-agent/
 └── requirements.txt         # 依赖
 ```
 
+## 技术细节
+
+### 各阶段数据流向图
+
+```mermaid
+flowchart LR
+    PT["problem_text: str"] --> AN["analyze()"]
+    MF["method_floor: list[str]"] --> AN
+    AN -->|"analysis: dict"| MO["build_model()"]
+    PT --> MO
+    REF["references: str"] --> MO
+    DF["data_files: list[str]"] --> MO
+    MF --> MO
+    MO -->|"model_result: dict"| RC["run_code()"]
+    RC -->|"exec_result: dict"| CS["parse_chart_status()"]
+    CS -->|"failed_charts: list[dict]"| GR["generate_repair_code()"]
+    GR -->|"repair_code: str"| RC
+    RC -->|"exec_result: dict"| BR["build_report()"]
+    PT --> BR
+    AN -->|"analysis: dict"| BR
+    MO -->|"model_result: dict"| BR
+    REF --> BR
+    BR -->|"paper: str"| EX["export_docx()"]
+    EX -->|"paper.docx: Path"| OUT["run_pipeline_staged() 返回"]
+    RC -->|"artifacts: list[str]"| OUT
+```
+
+### 阶段 1 — RAG 检索输出
+
+由 `rag.retriever` 提供，传入后续阶段：
+
+| 变量 | 类型 | 说明 |
+|------|------|------|
+| `references` | `str` | 格式化后的优秀论文片段，作为建模与论文撰写参考 |
+| `method_floor` | `list[str]` | 参考论文使用的方法名列表，作为 Analyzer 和 Modeler 的方法下限 |
+
+检索时取题目前 500 字，`top_k=6`；结果同步保存到 `projects/<name>/references.md`。
+
+---
+
+### 阶段 2 — Analyzer 输出（`analysis: dict`）
+
+由 `agents/analyzer.py` 的 `analyze()` 返回，保存为 `analysis.json`。
+
+```json
+{
+  "problem_type": "优化",
+  "key_variables": ["变量1", "变量2"],
+  "suggested_methods": ["建模方向1", "建模方向2"],
+  "recommended_methods": [
+    {"method": "集合覆盖模型", "reason": "题目为覆盖类调度，决策变量为班次选择"},
+    {"method": "整数线性规划", "reason": "存在明确的最小化成本目标函数和线性约束"}
+  ],
+  "recommended_libraries": ["pulp", "numpy", "pandas"]
+}
+```
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `problem_type` | `str` | 必须为 `"优化"` `"预测"` `"评价"` `"分类"` 之一 |
+| `key_variables` | `list[str]` | LLM 识别的关键决策/状态变量名称 |
+| `suggested_methods` | `list[str]` | 概括性建模方向（高层次） |
+| `recommended_methods` | `list[dict]` | 每项含 `method`（具体方法名）和 `reason`（针对本题的适用理由） |
+| `recommended_libraries` | `list[str]` | 推荐使用的 Python 库名 |
+
+---
+
+### 阶段 3 — Modeler 输出（`model_result: dict`）
+
+由 `agents/modeler.py` 的 `build_model()` 返回，两阶段生成。
+
+```json
+{
+  "model_description": "## 模型假设\n...\n## 目标函数\n$$...$$",
+  "solver_code": "import pulp\n...",
+  "expected_outputs": ["排班方案表", "成本对比图", "敏感性分析图"],
+  "plan": {
+    "solver": "pulp",
+    "variable_design": "aggregate_integer",
+    "sub_problems": ["问题1：最小化总成本", "问题2：灵敏度分析"],
+    "estimated_total_vars": 480,
+    "approach_summary": "聚合整数规划，按时段统计各班次人数"
+  }
+}
+```
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `model_description` | `str` | Markdown 格式数学模型（假设、符号、目标函数、约束） |
+| `solver_code` | `str` | 可独立运行的完整 Python 求解代码，保存为 `solver.py` |
+| `expected_outputs` | `list[str]` | LLM 预期的产出说明，每项一条 |
+| `plan.solver` | `str` | 第一阶段确认的求解器：`pulp` `scipy` `statsmodels` `sklearn` `networkx` `cpsat` |
+| `plan.variable_design` | `str` | 变量设计策略：`aggregate_integer` `continuous` `not_applicable` |
+| `plan.sub_problems` | `list[str]` | 各子问题简述 |
+| `plan.estimated_total_vars` | `int` | 预估决策变量总数（Validator 校验上限 10000） |
+| `plan.approach_summary` | `str` | 整体求解思路一句话描述 |
+
+`model_description` 保存为 `model.md`，`solver_code` 保存为 `solver.py`。
+
+---
+
+### 阶段 4 — Code Runner 输出（`exec_result: dict`）
+
+由 `tools/code_runner.py` 的 `run_code()` 返回，工作目录为 `projects/<name>/charts/`。
+
+```json
+{
+  "success": true,
+  "returncode": 0,
+  "stdout": "[CHART_OK:图1_需求热力图.png]\n[CHART_OK:图2_排班方案.png]",
+  "stderr": "",
+  "timeout": false,
+  "artifacts": [
+    "D:/.../<name>/charts/图1_需求热力图.png",
+    "D:/.../<name>/charts/图2_排班方案.png",
+    "D:/.../<name>/charts/_results.pkl"
+  ]
+}
+```
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `success` | `bool` | `returncode == 0` 且未超时 |
+| `returncode` | `int \| None` | 子进程退出码；超时时为 `None` |
+| `stdout` | `str` | 标准输出，含 `[CHART_OK:…]` / `[CHART_FAIL:…]` 标记 |
+| `stderr` | `str` | 错误输出；超时时包含超时说明 |
+| `timeout` | `bool` | 是否因超时被 kill（阈值 480 秒） |
+| `artifacts` | `list[str]` | 执行后工作目录新增文件的**绝对路径**列表（PNG + pkl 等） |
+
+`parse_chart_status(stdout, workdir)` 进一步解析图表标记，返回：
+
+```json
+{
+  "succeeded": ["图1_需求热力图.png"],
+  "failed": [
+    {"name": "图3_灵敏度分析.png", "traceback": "Traceback...\nKeyError: 'cost'"}
+  ]
+}
+```
+
+---
+
+### 阶段 4.5 — Chart Repairer 输入输出
+
+`agents/chart_repairer.py` 的 `generate_repair_code()` 接收：
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `original_code` | `str` | 原始完整求解代码（供 LLM 理解变量上下文） |
+| `failed_charts` | `list[dict]` | 每项含 `name`（文件名）和 `traceback`（完整错误栈） |
+
+返回 `str`（可独立运行的 Python 修复代码），修复代码通过 `pickle.load("_results.pkl")` 获取求解结果，不重新求解，最多循环 3 轮。
+
+---
+
+### 阶段 5 — Reporter 输入输出
+
+`agents/reporter.py` 的 `build_report()` 接收 `problem_text`、`analysis`、`model_result`、`exec_result`（`artifacts` 转为相对路径后传入）、`references`，返回 `str`（Markdown 论文全文），保存为 `paper.md`。
+
+---
+
+### run_pipeline_staged 最终返回
+
+```python
+{
+    "project_dir":      Path,        # projects/<name>/
+    "paper_path":       Path,        # projects/<name>/paper.md
+    "paper_docx_path":  Path | None, # projects/<name>/paper.docx（导出失败时为 None）
+    "solver_path":      Path,        # projects/<name>/solver.py
+    "artifacts":        list[str],   # 图表相对路径列表（相对于 project_dir）
+    "exec_success":     bool,        # exec_result["success"]
+}
+```
+
+---
+
+### 项目目录产物一览
+
+每道题完成后 `projects/<name>/` 的产物结构：
+
+```
+projects/<name>/
+├── problem.md          # 题目原文
+├── analysis.json       # Analyzer 输出
+├── references.md       # RAG 检索到的参考片段
+├── model.md            # Modeler 数学模型描述
+├── solver.py           # Modeler 生成的求解代码
+├── paper.md            # Reporter 输出的 Markdown 论文
+├── paper.docx          # pandoc 导出的 Word 论文
+├── data/               # 上传的数据附件（CSV/Excel）
+└── charts/             # Code Runner 工作目录
+    ├── 图1_xxx.png
+    ├── 图2_xxx.png
+    └── _results.pkl    # 求解结果序列化，供图表修复代码加载
+```
+
+---
+
 ## 快速开始
 
 ### 1. 环境准备
